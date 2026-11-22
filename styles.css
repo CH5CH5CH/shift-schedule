@@ -77,7 +77,16 @@ button{-webkit-user-select:none;user-select:none}
 .sec{margin-top:18px}
 .sec>.label{display:block;margin:0 4px 8px}
 .sec-t{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;row-gap:2px;margin:0 4px 8px}
-.sec-t .hint,.month .hint,.month .label{text-shadow:0 0 10px var(--bg1),0 0 3px var(--bg1),0 0 1px var(--bg1)}
+/* 달·블롭·유리 위 작은 글자: 배경색(bg1) halo로 4.5:1 이상 확보 (DESIGN 4장) */
+:root{--halo:0 0 1px var(--bg1),0 0 1px var(--bg1),0 0 2px var(--bg1),0 0 3px var(--bg1),0 0 6px var(--bg1),0 0 10px var(--bg1),0 0 16px var(--bg1)}
+.label,.hint,.ticks,.rng,.tm,.dow,.legend,.rhint,.credit,.shift,.month h2,.big span,.tx,.nm2 small,.pill small,.seg button,.day:not(.C) span,.otlist .row2,.tpill,.x,.tabbar button{text-shadow:var(--halo)}
+.seg button:not(.on) small{opacity:1}
+.pill.wake small,.seg button.on,.sheet *{text-shadow:none}
+/* 달 위에 얹히는 작은 버튼·안내: 불투명에 가까운 칩 */
+:root{--chip:color-mix(in srgb,var(--bg1) 82%,transparent)}
+.tabbar.glass{background:var(--chip)}
+/* 라이트 테마의 accent는 밝은 바탕에서 4.5:1이 안 나와, 칩 위 글자는 기존 글자색(--text) */
+:root[data-theme$=l] .golink,:root[data-theme$=l] .evenote b{color:var(--text)}
 .seg{display:flex;padding:4px;gap:4px;border-radius:16px}
 .seg button{flex:1;min-width:0;border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:600;line-height:1.25;padding:10px 4px;border-radius:12px;cursor:pointer;transition:background .25s,color .25s;min-height:44px}
 .seg button small{display:block;font-size:12px;font-weight:700;opacity:.8}
@@ -96,14 +105,14 @@ button{-webkit-user-select:none;user-select:none}
 .otbanner b{display:block;font-size:15px;font-weight:800}
 .otbanner small{font-size:12px;font-weight:600;opacity:.8}
 .otbanner .more{margin-left:auto;font-size:12px;font-weight:800;opacity:.75;white-space:nowrap}
-.evenote{display:flex;flex-direction:column;gap:2px;margin:0 0 12px;padding:10px 14px;border-radius:14px;border:1px solid var(--gline);background:var(--glass);font-size:13px}
+.evenote{display:flex;flex-direction:column;gap:2px;margin:0 0 12px;padding:10px 14px;border-radius:14px;border:1px solid var(--gline);background:var(--chip);font-size:13px}
 .evenote b{font-weight:800;color:var(--accent)}
 .evenote small{font-size:11.5px;color:var(--muted)}
 .head{display:flex;justify-content:space-between;align-items:flex-end;gap:8px;padding:0 4px}
 .head>div{min-width:0}
 .shift{font-size:16px;font-weight:700;margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .otbadge{font-size:12px;font-weight:800;padding:3px 8px;border-radius:8px;background:var(--ot);color:var(--oton)}
-.golink{flex:none;border:1px solid var(--gline);background:var(--glass);color:var(--accent);font-size:12px;font-weight:800;padding:7px 10px;border-radius:12px;cursor:pointer;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.golink{flex:none;border:1px solid var(--gline);background:var(--chip);color:var(--accent);font-size:12px;font-weight:800;padding:7px 10px;border-radius:12px;cursor:pointer;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .hero{position:relative;margin-top:18px;padding:20px 20px 16px}
 .hero::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(225deg,var(--litin),transparent 45%)}
 .big{font-size:56px;font-weight:800;letter-spacing:-.03em;line-height:1.05;margin-top:4px;color:var(--text);text-shadow:var(--bigshadow);white-space:nowrap}
@@ -186,7 +195,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .month h2{font-size:22px;font-weight:800;white-space:nowrap}
 .mnav{display:flex;align-items:center;gap:4px}
 .mnav .label{margin-right:6px;white-space:nowrap}
-.mnav button{width:30px;height:30px;border-radius:10px;border:1px solid var(--gline);background:var(--glass);color:var(--text);font-size:18px;font-weight:700;line-height:1;cursor:pointer}
+.mnav button{width:30px;height:30px;border-radius:10px;border:1px solid var(--gline);background:var(--chip);color:var(--text);font-size:18px;font-weight:700;line-height:1;cursor:pointer}
 .mnav button:disabled{opacity:.3;cursor:default}
 .rhint{font-size:12px;color:var(--muted);margin:8px 4px 0;line-height:1.5}
 .legend{display:flex;flex-wrap:wrap;gap:12px;row-gap:4px;margin:12px 4px;font-size:12px;color:var(--muted);font-weight:500}
@@ -248,6 +257,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
   max-height:calc(100% - 96px - var(--tab-b) - max(20px,var(--safe-t)));overflow-y:auto;overscroll-behavior:contain;
   transform:translateY(calc(100% + 120px + var(--tab-b)));transition:transform .35s cubic-bezier(.2,.8,.2,1);visibility:hidden}
 .sheet.show{transform:none;visibility:visible}
+.sheet.glass{background:color-mix(in srgb,var(--bg1) 94%,transparent);box-shadow:inset -1.5px 1.5px 0 var(--lit),-12px 16px 34px -8px var(--cast)}
 .sheet:not(.show){transition:transform .35s cubic-bezier(.2,.8,.2,1),visibility 0s .35s}
 .grab{width:40px;height:5px;border-radius:3px;background:var(--muted);opacity:.5;margin:0 auto 12px}
 .sheet h3{font-size:17px;font-weight:800;margin-bottom:4px}
