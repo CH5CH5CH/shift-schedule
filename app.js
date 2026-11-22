@@ -226,14 +226,16 @@
     const lab = v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
     h += `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${dayWord} ${T.s}조 · ${fmt(v.start)} 출근${otTxt ? `<span class="otbadge">${otTxt}</span>` : ''}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     if (v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
+    // 잠들기 = max(지금, 집 도착 + 밥). 지금이 더 늦으면 막대는 지금부터 시작
+    const fromNow = !v.prevC || v.now >= v.home + (v.eat ? v.meal : 0);
     const parts = [];
-    if (v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
+    if (!fromNow && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
     t.tasks.forEach(k => parts.push({ cls: 't', m: k.m, txt: k.n }));
     h += `<div class="glass hero a2"><div class="label">오늘 잘 수 있는 시간</div><div class="big num" data-sleep></div>
       <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
-      <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.prevC ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>출발 ${fmt(v.dep)}</span></div></div>`;
-    if (v.prevC) h += `<div class="sec a3"><span class="label">집에 오면</span><div class="seg glass">${[[0, '바로 자기', fmt(v.home)], [1, '밥 먹고 자기', fmt(v.home + v.meal)]]
+      <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div></div>`;
+    if (v.prevC) h += `<div class="sec a3"><span class="label">집에 오면</span><div class="seg glass">${[[0, '바로 자기', fmt(Math.max(v.now, v.home))], [1, '밥 먹고 자기', fmt(Math.max(v.now, v.home + v.meal))]]
       .map(([k, l, tm]) => `<button data-act="eat" data-k="${k}" class="${+v.eat === k ? 'on' : ''}">${l}<small class="num">${tm} 잠들기</small></button>`).join('')}</div></div>`;
     h += `<div class="sec a3"><span class="label">오늘 어떻게 가요?</span><div class="seg glass">${v.opts
       .map(o => `<button data-act="mode" data-k="${o.k}" class="${o.k === v.mode ? 'on' : ''}">${o.label}<small class="num">${fmt(o.dep)} 출발</small></button>`).join('')}</div></div>`;
@@ -269,7 +271,7 @@
     const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(t.tasks.map(k => ({ cls: 't', m: k.m, txt: k.n })));
     h += `<div class="glass hero a2" style="margin-top:0"><div class="label">오늘 잘 수 있는 시간</div><div class="big num" data-sleep></div>
       <div class="pair"><button class="pill wake" data-act="wake"><small>일어나기</small><b class="num" data-wake>${fmt(v.wake)}</b></button><div class="pill"><small>할 일 끝</small><b class="num" data-dep>${fmt(v.end)}</b></div></div>
-      <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div></div>`;
+      <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null && v.bed === v.home ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div></div>`;
     let tt = '';
     if (v.home != null) tt += ev('', fmt(v.home), '집 도착<small>C조 마지막 근무 끝</small>');
     tt += ev('', fmt(v.bed), `잠들기<small>${dur(v.sleep)} 자요</small>`);

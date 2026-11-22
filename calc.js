@@ -122,7 +122,7 @@
     if (T.dep - now >= 1440) {
       const y = st.roster[dayToKey(today - 1)];
       const home = y && y.s === 'C' ? homeArrival(today - 1, 'C', y.ot, st.move) : null;
-      const bed = home != null ? home : now;
+      const bed = home != null ? Math.max(now, home) : now; // 잠들기 = max(지금, 집 도착)
       const wakeClock = t && t.wake != null ? t.wake : (home != null ? 15 * 60 : 10 * 60);
       let wake = Math.floor(bed / 1440) * 1440 + wakeClock;
       while (wake < bed + 30) wake += 1440;
@@ -132,11 +132,12 @@
       });
     }
 
-    // 근무일 계산. 대상 근무의 전날이 C조면 그 C조 집 도착(+밥)부터, 아니면 지금부터
+    /* 근무일 계산. 잠들기 = max(지금, 집 도착 + 자기 전 밥) (spec 6장, 11/23 통일)
+       집 도착은 대상 근무의 전날이 C조일 때만 있다 — 근무조와 무관(연차·대근으로 C조 다음 날이 A·B조인 날 포함) */
     const p = st.roster[dayToKey(T.day - 1)];
     const prevC = !!p && p.s === 'C';
     const home = prevC ? homeArrival(T.day - 1, 'C', p.ot, st.move) : null;
-    const bed = prevC ? home + (eat ? meal : 0) : now;
+    const bed = prevC ? Math.max(now, home + (eat ? meal : 0)) : now;
     const wake = T.dep - total;
     const S = SHIFTS[T.s];
     return Object.assign(base, {
