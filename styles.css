@@ -77,13 +77,16 @@ button{-webkit-user-select:none;user-select:none}
 .sec{margin-top:18px}
 .sec>.label{display:block;margin:0 4px 8px}
 .sec-t{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;row-gap:2px;margin:0 4px 8px}
-/* 달·블롭·유리 위 작은 글자: 배경색(bg1) halo로 4.5:1 이상 확보 (DESIGN 4장) */
-:root{--halo:0 0 1px var(--bg1),0 0 1px var(--bg1),0 0 2px var(--bg1),0 0 3px var(--bg1),0 0 6px var(--bg1),0 0 10px var(--bg1),0 0 16px var(--bg1)}
-.label,.hint,.ticks,.rng,.tm,.dow,.legend,.rhint,.credit,.shift,.month h2,.big span,.tx,.nm2 small,.pill small,.seg button,.day:not(.C) span,.otlist .row2,.tpill,.x,.tabbar button,.fillrow,.addrow{text-shadow:var(--halo)}
-.pill.wake small,.seg button.on,.sheet *{text-shadow:none}
+/* 유리 카드 안·하늘 위 작은 글자: 연하고 좁은 bg1 halo (DESIGN 4장, 2안 2026-11-23). 단색 바탕에서 halo 없이 4.5:1이 되는 곳은 빼고, 달 바로 위 글자는 칩 */
+:root{--halo:0 0 1px var(--bg1),0 0 2px var(--bg1),0 0 4px color-mix(in srgb,var(--bg1) 80%,transparent),0 0 10px color-mix(in srgb,var(--bg1) 45%,transparent);--chip2:color-mix(in srgb,var(--bg1) 90%,transparent)}
+.label,.hint,.ticks,.rng,.tm,.dow,.legend,.credit,.usage,.big span,.tx small,.nm2 small,.pill:not(.wake) small,.seg button:not(.on),.day.off .c,.otlist .row2,.tpill,.tabbar button,.fillrow{text-shadow:var(--halo)}
+/* 달 바로 위 작은 글자·버튼: halo 대신 작은 반투명 칩(bg1 90%) */
+.sec-t .hint,.mnav .label,.ticks span,.rhint{background:var(--chip2);border-radius:8px;padding:1px 7px;text-shadow:none}
+.restsec .seg{background:var(--chip2)}
+.sheet *{text-shadow:none}
 /* 달 위에 얹히는 작은 버튼·안내: 불투명에 가까운 칩 */
 :root{--chip:color-mix(in srgb,var(--bg1) 82%,transparent)}
-.tabbar.glass{background:var(--chip)}
+.tabbar.glass{background:var(--chip);box-shadow:inset -1.5px 1.5px 0 var(--lit),inset -40px 40px 70px -50px var(--litin),inset 1px -1px 0 rgba(0,0,0,.04),-12px 20px 34px -12px var(--cast)}
 /* 라이트 테마의 accent는 밝은 바탕에서 4.5:1이 안 나와, 칩 위 글자는 기존 글자색(--text) */
 /* accent를 글자색으로 쓰는 곳은 var(--ink,var(--accent)) — --ink는 라이트 봄 핑크·샴페인에만 정의 */
 .seg{display:flex;padding:4px;gap:4px;border-radius:16px}
@@ -154,7 +157,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .tk .nm b{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tk .rng{font-size:11px;color:var(--muted);white-space:nowrap}
 .tk .ctl{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
-.x{width:24px;height:26px;border-radius:8px;border:0;background:var(--glass);color:var(--muted);font-weight:800;font-size:13px;cursor:pointer;flex:none}
+.x{width:24px;height:26px;border-radius:8px;border:0;background:var(--chip2);color:var(--muted);font-weight:800;font-size:13px;cursor:pointer;flex:none}
 .tk.new .card{animation:flash 1.2s ease}
 @keyframes flash{0%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:0 0 0 0 transparent}}
 .grip{touch-action:none;cursor:grab;width:22px;min-width:22px;height:32px;padding:0;margin:0 -2px 0 -4px;display:grid;place-items:center;border:0;background:none;color:var(--muted);flex:none;
@@ -196,7 +199,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .mnav .label{margin-right:6px;white-space:nowrap}
 .mnav button{width:30px;height:30px;border-radius:10px;border:1px solid var(--gline);background:var(--chip);color:var(--text);font-size:18px;font-weight:700;line-height:1;cursor:pointer}
 .mnav button:disabled{opacity:.3;cursor:default}
-.rhint{font-size:12px;color:var(--muted);margin:8px 4px 0;line-height:1.5}
+.rhint{display:inline-block;font-size:12px;color:var(--muted);margin:8px 4px 0;line-height:1.5}
 .legend{display:flex;flex-wrap:wrap;gap:12px;row-gap:4px;margin:12px 4px;font-size:12px;color:var(--muted);font-weight:500}
 .legend span{display:flex;align-items:center;gap:5px}
 .lg{width:12px;height:12px;border-radius:4px;display:inline-block}
@@ -258,7 +261,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
   max-height:calc(100% - 96px - var(--tab-b) - max(20px,var(--safe-t)));overflow-y:auto;overscroll-behavior:contain;
   transform:translateY(calc(100% + 120px + var(--tab-b)));transition:transform .35s cubic-bezier(.2,.8,.2,1);visibility:hidden}
 .sheet.show{transform:none;visibility:visible}
-.sheet.glass{background:color-mix(in srgb,var(--bg1) 94%,transparent);box-shadow:inset -1.5px 1.5px 0 var(--lit),-12px 16px 34px -8px var(--cast)}
+.sheet.glass{background:color-mix(in srgb,var(--bg1) 94%,transparent);box-shadow:inset -1.5px 1.5px 0 var(--lit),-12px 20px 34px -12px var(--cast)}
 .sheet:not(.show){transition:transform .35s cubic-bezier(.2,.8,.2,1),visibility 0s .35s}
 .grab{width:40px;height:5px;border-radius:3px;background:var(--muted);opacity:.5;margin:0 auto 12px}
 .sheet h3{font-size:17px;font-weight:800;margin-bottom:4px}

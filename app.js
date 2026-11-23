@@ -410,8 +410,8 @@
       r('pal').innerHTML = mode === 'shift' ? [['A', 'A'], ['B', 'B'], ['C', 'C'], ['off', '휴무']].map(([k, l]) => `<button data-brush="${k}" class="${k === brush ? 'on' : ''}">${l}</button>`).join('') : '';
       r('pal').style.display = mode === 'shift' ? '' : 'none';
       r('hint').textContent = mode === 'shift'
-        ? '처음엔 「한 번에 채우기」로 6월까지 채우고, 동료와 바꾼 날만 근무조를 고른 뒤 그 날짜를 누르세요.'
-        : 'OT가 있는 날짜를 누르고 전OT·후OT를 고르면 저장돼요. 좌우로 밀면 다른 달로 넘어가요.';
+        ? '근무조를 고르고 날짜를 누르세요'
+        : '날짜를 누르고 전OT·후OT 선택';
       r('otlist').innerHTML = ks.length ? ks.map(k => {
         const v = S.roster[k], [a, b] = T[v.s];
         return `<div class="row2"><span>${md(k)} (${dow(k)}) · ${v.s}조<span class="when num">${f(v.ot === 'pre' ? a - 3 : a)}~${f(v.ot === 'post' ? b + 3 : b)}</span></span><span class="tag">${v.ot === 'pre' ? '전OT' : '후OT'}</span></div>`;
