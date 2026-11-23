@@ -1,6 +1,6 @@
 {
-  "name": "교대근무 일정",
-  "short_name": "교대 일정",
+  "name": "Agenda",
+  "short_name": "Agenda",
   "lang": "ko",
   "start_url": "./",
   "scope": "./",
