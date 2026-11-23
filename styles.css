@@ -183,10 +183,10 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
   animation:phfloat 14s ease-in-out infinite;opacity:0}
 .restfx .p0{top:38%;font-size:28px;font-weight:800;animation-name:phbreathe;animation-duration:7s;opacity:1}
 .restfx .p1{top:50%;font-size:19px;animation-delay:0s}
-.restfx .p2{top:58%;font-size:14px;color:var(--muted);animation-delay:-3.5s;margin-left:-70px}
-.restfx .p3{top:66%;font-size:14px;color:var(--muted);animation-delay:-7s;margin-left:40px}
+.restfx .p2{top:58%;font-size:14px;animation-delay:-3.5s;margin-left:-70px}
+.restfx .p3{top:66%;font-size:14px;animation-delay:-7s;margin-left:40px}
 .restfx .p4{top:73%;font-size:15px;animation-delay:-10.5s;margin-left:-40px}
-.restfx .p5{top:30%;font-size:13px;color:var(--muted);animation-delay:-5s;margin-left:60px}
+.restfx .p5{top:30%;font-size:13px;animation-delay:-5s;margin-left:60px}
 @keyframes phfloat{0%{opacity:0;transform:translate(-50%,14px)}18%{opacity:.95}70%{opacity:.95}100%{opacity:0;transform:translate(-50%,-22px)}}
 @keyframes phbreathe{0%,100%{opacity:.82;transform:translate(-50%,0) scale(1)}50%{opacity:1;transform:translate(-50%,-4px) scale(1.03)}}
 
@@ -208,7 +208,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-top:4px}
 .dow{text-align:center;font-size:11px;color:var(--muted);padding:2px 0 4px;font-weight:600}
 .day{height:62px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:6px;gap:2px;position:relative;border:2px solid transparent;overflow:hidden;cursor:pointer;color:var(--text)}
-.day .n{font-size:10px;font-weight:600;opacity:.7}
+.day .n{font-size:10px;font-weight:600}
 .day .c{font-size:15px;font-weight:800}
 .A,.lg.A{background:var(--glass);border-color:var(--gline)}
 .B,.lg.B{background:color-mix(in srgb,var(--accent) 35%,transparent)}
