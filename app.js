@@ -32,14 +32,27 @@
       early: { m: 40, sc: 'ot' },
       theme: { c: 'p2', d: 'd' },
       today: null,
+      usage: [], // 오늘 탭이 화면에 보인 날짜(YYYY-MM-DD), 최근 14일만. 서버 전송 없음
     };
   }
   const isList = a => Array.isArray(a) && a.every(x => x && typeof x.n === 'string' && Number.isFinite(x.m));
+  const isDayKey = k => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
+  /* 데이터 보존 원칙 3번: 읽지 못한 저장값은 지우지 않고 다른 키에 백업한 뒤 기본값으로 시작 */
+  let backedUp = '';
+  function backup(raw) {
+    const n = new Date(), p = x => String(x).padStart(2, '0');
+    const k = `${KEY}-backup-${n.getFullYear()}${p(n.getMonth() + 1)}${p(n.getDate())}-${p(n.getHours())}${p(n.getMinutes())}${p(n.getSeconds())}`;
+    try { localStorage.setItem(k, raw); backedUp = k; } catch (e) { backedUp = ''; }
+  }
   function load() {
     const d = defaults();
+    let raw = null;
+    try { raw = localStorage.getItem(KEY); } catch (e) { return d; }
+    if (raw == null) return d;
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object' || s.v !== 1) { backup(raw); return d; }
     try {
-      const s = JSON.parse(localStorage.getItem(KEY));
-      if (!s || s.v !== 1) return d;
       return {
         v: 1,
         roster: Object.assign(d.roster, s.roster && typeof s.roster === 'object' ? s.roster : {}),
@@ -49,8 +62,9 @@
         early: Object.assign(d.early, s.early),
         theme: Object.assign(d.theme, s.theme),
         today: s.today && isList(s.today.tasks) ? Object.assign({ removed: [] }, s.today) : null,
+        usage: Array.isArray(s.usage) ? s.usage.filter(isDayKey) : [],
       };
-    } catch (e) { return d; }
+    } catch (e) { backup(raw); return d; }
   }
   let saveFailed = false;
   function save() {
@@ -194,12 +208,27 @@
     return v;
   }
 
+  /* 사용 기록: 오늘 탭이 화면에 보인 날만, 최근 14일 보관 */
+  function recordUse() {
+    if (document.hidden || document.getElementById('app').dataset.tab !== 'today') return;
+    const d = Math.floor(nowAbs() / 1440), k = C.dayToKey(d), min = C.dayToKey(d - 13);
+    const u = S.usage.filter(x => x >= min && x <= k);
+    if (!u.includes(k)) u.push(k);
+    u.sort();
+    if (u.join() !== S.usage.join()) { S.usage = u; save(); }
+  }
+  function usedDays7() {
+    const d = Math.floor(nowAbs() / 1440), from = C.dayToKey(d - 6), to = C.dayToKey(d);
+    return S.usage.filter(x => x >= from && x <= to).length;
+  }
+
   function renderToday(animate = true) {
+    recordUse();
     const v = lastVM = computeVM();
     let h = '';
     if (v.type === 'none') {
       todayView.classList.remove('resting');
-      h = `<div class="head a1"><div><div class="label num">지금 ${fmt(v.now)}</div><div class="shift">다음 근무가 없어요</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>
+      h = `<div class="head a1"><div><div class="label num">${v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `지금 ${fmt(v.now)}`}</div><div class="shift">다음 근무가 없어요</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>
         <div class="glass hero a2 empty"><b>근무표에 다음 근무가 없어요</b><span class="label">근무표 탭에서 근무조를 채우면 여기서 잘 수 있는 시간을 계산해요.</span></div>`;
       todayEl.innerHTML = h; return;
     }
@@ -223,13 +252,13 @@
     if (T.ot) h += `<button class="otbanner" data-act="roster"><span class="ico">OT</span><div><b>${dayWord}은 ${otTxt} 날이에요</b><small>${T.ot === 'pre'
       ? `평소보다 3시간 일찍 · ${fmt(v.start)}부터 근무 · 출근 버스 없음`
       : `평소보다 3시간 늦게 · ${fmt(v.end)}까지 근무 · 퇴근 버스 없음`}</small></div><span class="more">근무표 ›</span></button>`;
-    const lab = v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
+    const lab = v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
     h += `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${dayWord} ${T.s}조 · ${fmt(v.start)} 출근${otTxt ? `<span class="otbadge">${otTxt}</span>` : ''}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     if (v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
     // 잠들기 = max(지금, 집 도착 + 밥). 지금이 더 늦으면 막대는 지금부터 시작
-    const fromNow = !v.prevC || v.now >= v.home + (v.eat ? v.meal : 0);
+    const fromNow = v.home == null || v.now >= v.home + (v.prevC && v.eat ? v.meal : 0);
     const parts = [];
-    if (!fromNow && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
+    if (!fromNow && v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
     t.tasks.forEach(k => parts.push({ cls: 't', m: k.m, txt: k.n }));
     h += `<div class="glass hero a2"><div class="label">오늘 잘 수 있는 시간</div><div class="big num" data-sleep></div>
@@ -241,8 +270,8 @@
       .map(o => `<button data-act="mode" data-k="${o.k}" class="${o.k === v.mode ? 'on' : ''}">${o.label}<small class="num">${fmt(o.dep)} 출발</small></button>`).join('')}</div></div>`;
     // 시간표
     let tt = '';
+    if (v.home != null) tt += ev('', fmt(v.home), `집 도착<small>${v.prevC ? 'C' : v.prog.s}조 퇴근</small>`);
     if (v.prevC) {
-      tt += ev('', fmt(v.home), `집 도착<small>C조 퇴근</small>`);
       if (v.eat) tt += ev('meal', fmt(v.home), `밥 먹기<small>~${fmt(v.home + v.meal)}까지</small>`, `<button class="tpill num hit" data-act="meal">${dur(v.meal)}</button>`);
     }
     tt += ev('', fmt(v.bed), `잠들기<small>${v.sleep > 0 ? dur(v.sleep) + ' 자요' : ''}</small>`);
@@ -263,7 +292,7 @@
 
   function offHTML(v) {
     const T = v.target, t = S.today;
-    const lab = `${v.home != null ? fmt(v.home) + ' 집 도착' : '지금 ' + fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '오늘 근무 끝'}`;
+    const lab = v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `${v.home != null ? fmt(v.home) + ' 집 도착' : '지금 ' + fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '오늘 근무 끝'}`;
     let h = `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${v.todayOff ? '오늘은 쉬는 날' : '오늘 근무 끝 · 쉬는 시간'}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     h += `<div class="sec a2 restsec"><div class="seg glass">${[[0, '계획 세우기', '일어날 시간 정하기'], [1, '아무것도 안 정할래', '알람 없는 날']]
       .map(([k, l, s]) => `<button data-act="rest" data-k="${k}" class="${+v.rest === k ? 'on' : ''}">${l}<small>${s}</small></button>`).join('')}</div></div>`;
@@ -500,7 +529,8 @@
       <div class="sec a4 themesec"><div class="sec-t"><span class="label">테마</span><span class="hint">누르면 바로 바뀌어요</span></div>
         <div class="seg glass">${THEMES.map(([k, l]) => `<button data-act="tc" data-k="${k}" class="${S.theme.c === k ? 'on' : ''}">${l}</button>`).join('')}</div>
         <div class="seg glass">${[['l', '라이트'], ['d', '다크']].map(([k, l]) => `<button data-act="td" data-k="${k}" class="${S.theme.d === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
-      <p class="credit">보름달 이미지: NASA's Scientific Visualization Studio (CGI Moon Kit, LRO 색 지도)${saveFailed ? '<br><b style="color:var(--accent)">저장 공간에 쓰지 못했어요. 사파리 개인정보 보호 모드인지 확인해 주세요.</b>' : ''}</p>`;
+      <p class="usage label num">최근 7일 사용 ${usedDays7()}일</p>
+      <p class="credit">보름달 이미지: NASA's Scientific Visualization Studio (CGI Moon Kit, LRO 색 지도)${saveFailed ? '<br><b style="color:var(--ink,var(--accent))">저장 공간에 쓰지 못했어요. 사파리 개인정보 보호 모드인지 확인해 주세요.</b>' : ''}${backedUp ? '<br><b style="color:var(--ink,var(--accent))">저장된 기록을 읽지 못해 따로 보관해 두었어요. 지우지 말고 알려 주세요.</b>' : ''}</p>`;
     freshBase = -1;
     sortable($('[data-base]', tasksEl), '.srow', (f, t) => { moveItem(S.base, f, t); save(); renderTasks(); });
   }

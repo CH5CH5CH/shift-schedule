@@ -250,6 +250,8 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .themesec .seg+.seg{margin-top:8px}
 .themesec .seg button{font-size:13px}
 .credit{margin:22px 4px 0;font-size:11px;color:var(--muted);line-height:1.5;text-align:center}
+.usage{display:block;margin:22px 4px 0;text-align:center}
+.usage+.credit{margin-top:8px}
 
 /* ── 바텀시트 ── */
 .sheet{position:absolute;left:8px;right:8px;bottom:calc(78px + var(--tab-b));z-index:9;border-radius:30px;padding:12px 20px 18px;

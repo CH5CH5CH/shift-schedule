@@ -105,21 +105,35 @@
   }
 
   /* 오늘 화면 계산 (spec 6장) */
+  /* 진행 중인 근무: 출발이 지났고(계산 대상보다 앞선 근무일) 아직 집 도착 전 (QA-001, 11/23) */
+  function inProgress(st, now, T) {
+    const today = Math.floor(now / 1440);
+    for (let d = today; d >= today - 1; d--) {
+      if (T && d >= T.day) continue;
+      const r = st.roster[dayToKey(d)];
+      if (!r || r.s === 'off' || !SHIFTS[r.s]) continue;
+      const home = homeArrival(d, r.s, r.ot, st.move);
+      if (home > now) return { day: d, key: dayToKey(d), s: r.s, ot: r.ot, home };
+    }
+    return null;
+  }
+
   function computeToday(st, now) {
     const T = findTarget(st, now);
     const today = Math.floor(now / 1440);
     const todayRec = st.roster[dayToKey(today)];
     const todayOff = !!todayRec && todayRec.s === 'off';
-    if (!T) return { type: 'none', key: 'none', now, todayOff };
+    const prog = inProgress(st, now, T);
+    if (!T) return { type: 'none', key: 'none', now, todayOff, prog };
 
     const t = st.today && st.today.key === T.key ? st.today : null;
     const tasks = t ? t.tasks : st.base;
     const total = tasks.reduce((a, x) => a + x.m, 0);
     const meal = t ? t.meal : 60, eat = t ? !!t.eat : false;
-    const base = { key: T.key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T };
+    const base = { key: T.key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T, prog };
 
-    // 다음 출발까지 24시간 이상 남으면 휴무 화면 (휴무 기간 또는 근무 블록 끝난 저녁)
-    if (T.dep - now >= 1440) {
+    // 휴무 화면은 오늘이 휴무이고 다음 출발까지 24시간 이상 남았을 때만. 근무일에는 절대 나오지 않음 (QA-001, 11/23)
+    if (todayOff && T.dep - now >= 1440) {
       const y = st.roster[dayToKey(today - 1)];
       const home = y && y.s === 'C' ? homeArrival(today - 1, 'C', y.ot, st.move) : null;
       const bed = home != null ? Math.max(now, home) : now; // 잠들기 = max(지금, 집 도착)
@@ -133,11 +147,12 @@
     }
 
     /* 근무일 계산. 잠들기 = max(지금, 집 도착 + 자기 전 밥) (spec 6장, 11/23 통일)
-       집 도착은 대상 근무의 전날이 C조일 때만 있다 — 근무조와 무관(연차·대근으로 C조 다음 날이 A·B조인 날 포함) */
+       집 도착: 대상 근무의 전날이 C조면 그 C조의 집 도착(근무조와 무관 — 연차·대근으로 C조 다음 날이 A·B조인 날 포함).
+       그 밖에 진행 중인 근무가 있으면 그 근무의 집 도착(근무 중 시간을 잠으로 세지 않음, QA-001). 자기 전 밥은 전날 C조일 때만 */
     const p = st.roster[dayToKey(T.day - 1)];
     const prevC = !!p && p.s === 'C';
-    const home = prevC ? homeArrival(T.day - 1, 'C', p.ot, st.move) : null;
-    const bed = prevC ? Math.max(now, home + (eat ? meal : 0)) : now;
+    const home = prevC ? homeArrival(T.day - 1, 'C', p.ot, st.move) : prog ? prog.home : null;
+    const bed = home != null ? Math.max(now, home + (prevC && eat ? meal : 0)) : now;
     const wake = T.dep - total;
     const S = SHIFTS[T.s];
     return Object.assign(base, {
@@ -152,7 +167,7 @@
   const api = {
     SHIFTS, OT_MIN, RANGE_START, RANGE_END, ANCHOR, ORDER, CYCLE,
     keyToDay, dayToKey, nowAbs, fmt, dur, fillRoster, defaultRoster, earlyFor, defaultMode,
-    depOptions, homeArrival, workStart, workEnd, findTarget, offNth, computeToday,
+    depOptions, homeArrival, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ShiftCalc = api;
