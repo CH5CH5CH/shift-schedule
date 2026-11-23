@@ -10,7 +10,7 @@
     B: { start: 14 * 60, end: 22 * 60, bus: 12 * 60 + 15, back: 22 * 60 + 30 },
     C: { start: 22 * 60, end: 30 * 60, bus: 20 * 60 + 15, back: 30 * 60 + 30 },
   };
-  const OT_MIN = 180;
+  const OT_MIN = 210; // OT 길이 3시간 30분(전OT·후OT 모두, QA-006 v10). OT 시각은 모두 이 값으로 계산
   const RANGE_START = '2026-11-01';
   const RANGE_END = '2027-06-30';
   const ANCHOR = { key: '2026-11-22', shift: 'C', nth: 1 }; // 11/22가 C조 첫날
@@ -75,7 +75,7 @@
       { k: 'car', label: '차로 회사', dep: b + S.start - move.car - e },
     ];
   }
-  /* 집 도착 = 퇴근버스 + 70분. 후OT 날은 (근무 끝 + 3시간) + 50분 */
+  /* 집 도착 = 퇴근버스 + 70분. 후OT 날은 (근무 끝 + OT_MIN) + 택시·차(50분) */
   function homeArrival(day, s, ot, move) {
     const S = SHIFTS[s], b = day * 1440;
     return ot === 'post' ? b + S.end + OT_MIN + move.car : b + S.back + move.ride;

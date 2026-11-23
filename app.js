@@ -251,8 +251,8 @@
     const dayWord = T.day === v.today ? '오늘' : T.day === v.today + 1 ? '내일' : md(T.key);
     let h = '';
     if (T.ot) h += `<button class="otbanner" data-act="roster"><span class="ico">OT</span><div><b>${dayWord}은 ${otTxt} 날이에요</b><small>${T.ot === 'pre'
-      ? `평소보다 3시간 일찍 · ${fmt(v.start)}부터 근무 · 출근 버스 없음`
-      : `평소보다 3시간 늦게 · ${fmt(v.end)}까지 근무 · 퇴근 버스 없음`}</small></div><span class="more">근무표 ›</span></button>`;
+      ? `평소보다 ${dur(C.OT_MIN)} 일찍 · ${fmt(v.start)}부터 근무 · 출근 버스 없음`
+      : `평소보다 ${dur(C.OT_MIN)} 늦게 · ${fmt(v.end)}까지 근무 · 퇴근 버스 없음`}</small></div><span class="more">근무표 ›</span></button>`;
     const lab = v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
     h += `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${dayWord} ${T.s}조 · ${fmt(v.start)} 출근${otTxt ? `<span class="otbadge">${otTxt}</span>` : ''}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     if (v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
@@ -364,7 +364,8 @@
     const el = $('#roster');
     const MONTHS = [];
     for (let i = 0; i < 8; i++) { const d = new Date(2026, 10 + i, 1); MONTHS.push([d.getFullYear(), d.getMonth()]); }
-    const T = { A: [6, 14], B: [14, 22], C: [22, 30] }, f = h => String(mod(h, 24)).padStart(2, '0') + ':00';
+    // 근무 시작·끝(시). OT 길이는 calc.js OT_MIN 하나만 쓴다(QA-006). f는 30분 단위도 HH:MM으로
+    const T = { A: [6, 14], B: [14, 22], C: [22, 30] }, OTH = C.OT_MIN / 60, f = h => fmt(Math.round(h * 60));
     const keyOf = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const monthOf = k => MONTHS.findIndex(([y, m]) => k.startsWith(keyOf(y, m, 1).slice(0, 8)));
     let mode = 'ot', brush = 'B', cur = null, mi = 0, built = false, todayKey = '';
@@ -417,7 +418,7 @@
         : '날짜를 눌러 근무조·OT 바꾸기';
       r('otlist').innerHTML = ks.length ? ks.map(k => {
         const v = S.roster[k], [a, b] = T[v.s];
-        return `<div class="row2"><span>${md(k)} (${dow(k)}) · ${v.s}조<span class="when num">${f(v.ot === 'pre' ? a - 3 : a)}~${f(v.ot === 'post' ? b + 3 : b)}</span></span><span class="tag">${v.ot === 'pre' ? '전OT' : '후OT'}</span></div>`;
+        return `<div class="row2"><span>${md(k)} (${dow(k)}) · ${v.s}조<span class="when num">${f(v.ot === 'pre' ? a - OTH : a)}~${f(v.ot === 'post' ? b + OTH : b)}</span></span><span class="tag">${v.ot === 'pre' ? '전OT' : '후OT'}</span></div>`;
       }).join('') : '<div class="row2"><span style="color:var(--muted)">이 달은 OT가 없어요</span></div>';
     }
     function drawAll() { MONTHS.forEach((_, i) => drawMonth(i)); drawSide(); }
@@ -440,7 +441,7 @@
         <div class="opts f4" data-r="shiftrow">${[['A', 'A조'], ['B', 'B조'], ['C', 'C조'], ['off', '휴무']].map(([s, l]) => `<button data-shift="${s}" class="${v.s === s ? 'on' : ''}">${l}</button>`).join('')}</div>
         ${off ? '<span class="label">휴무 날은 OT를 넣을 수 없어요</span>'
           : `<span class="label">OT · 같은 버튼을 다시 누르면 취소</span>
-        <div class="btns"><button data-ot="pre" class="${v.ot === 'pre' ? 'on' : ''}">전OT<small class="num">${f(a - 3)}부터 근무</small></button><button data-ot="post" class="${v.ot === 'post' ? 'on' : ''}">후OT<small class="num">${f(b + 3)}까지 근무</small></button></div>`}
+        <div class="btns"><button data-ot="pre" class="${v.ot === 'pre' ? 'on' : ''}">전OT<small class="num">${f(a - OTH)}부터 근무</small></button><button data-ot="post" class="${v.ot === 'post' ? 'on' : ''}">후OT<small class="num">${f(b + OTH)}까지 근무</small></button></div>`}
         <button class="close" data-x>닫기</button>`);
       };
       openSheet('', e => {
