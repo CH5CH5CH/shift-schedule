@@ -1,7 +1,7 @@
 /* 오프라인 캐시. 앱 파일을 바꿔서 배포할 때마다 VERSION을 올린다.
    같은 출처 파일: 저장본을 먼저 보여 주고 뒤에서 새 버전을 받아 둔다(다음 실행부터 반영).
    서체(CDN): 한 번 받으면 저장본만 쓴다. */
-const VERSION = 'shift-v4';
+const VERSION = 'shift-v5';
 const SHELL = [
   './', 'index.html', 'styles.css', 'calc.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
