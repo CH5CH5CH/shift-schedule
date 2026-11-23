@@ -83,6 +83,14 @@
   function workStart(day, s, ot) { return day * 1440 + SHIFTS[s].start - (ot === 'pre' ? OT_MIN : 0); }
   function workEnd(day, s, ot) { return day * 1440 + SHIFTS[s].end + (ot === 'post' ? OT_MIN : 0); }
 
+  /* 날짜별 상태(할 일·이동수단·밥·휴무 옵션) — v11: st.days[날짜 키]. 근무일 = 근무 시작 날짜, 휴무 = 그 날짜(달력 날짜 키, 사용자 결정 11/23)
+     st.days가 없으면 v10 형식(st.today 하나, 계산 대상 근무 키)으로 읽는다 — v10 점검과 롤백 호환 */
+  function dayOf(st, k) {
+    if (st.days) return st.days[k] || null;
+    return st.today && st.today.key === k ? st.today : null;
+  }
+  const sumM = tasks => tasks.reduce((a, x) => a + (Number.isFinite(x.m) ? x.m : 0), 0);
+
   /* 계산 대상 = 지금 이후 가장 먼저 오는 출발 (spec 9장 해석, 사용자 확인 2026-11-23) */
   function findTarget(st, now) {
     const today = Math.floor(now / 1440);
@@ -90,7 +98,7 @@
       const k = dayToKey(d), r = st.roster[k];
       if (!r || r.s === 'off' || !SHIFTS[r.s]) continue;
       const opts = depOptions(d, r.s, r.ot, st.move, st.early);
-      const saved = st.today && st.today.key === k ? st.today.mode : null;
+      const sd = dayOf(st, k), saved = sd ? sd.mode : null;
       const o = opts.find(x => x.k === saved) || opts.find(x => x.k === defaultMode(r.s, r.ot));
       if (o.dep > now) return { day: d, key: k, s: r.s, ot: r.ot, opts, mode: o.k, dep: o.dep };
     }
@@ -126,14 +134,17 @@
     const prog = inProgress(st, now, T);
     if (!T) return { type: 'none', key: 'none', now, todayOff, prog };
 
-    const t = st.today && st.today.key === T.key ? st.today : null;
-    const tasks = t ? t.tasks : st.base;
-    const total = tasks.reduce((a, x) => a + x.m, 0);
-    const meal = t ? t.meal : 60, eat = t ? !!t.eat : false;
-    const base = { key: T.key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T, prog };
-
     // 휴무 화면은 오늘이 휴무이고 다음 출발까지 24시간 이상 남았을 때만. 근무일에는 절대 나오지 않음 (QA-001, 11/23)
-    if (todayOff && T.dep - now >= 1440) {
+    const offScreen = todayOff && T.dep - now >= 1440;
+    // 상태 키: 근무일 계산은 근무 시작 날짜(T.key), 휴무 화면은 오늘 날짜(v11). v10 형식이면 둘 다 T.key
+    const key = offScreen && st.days ? dayToKey(today) : T.key;
+    const t = dayOf(st, key);
+    const tasks = t ? t.tasks : st.base;
+    const total = sumM(tasks);
+    const meal = t ? t.meal : 60, eat = t ? !!t.eat : false;
+    const base = { key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T, prog, tasks };
+
+    if (offScreen) {
       const y = st.roster[dayToKey(today - 1)];
       const home = y && y.s === 'C' ? homeArrival(today - 1, 'C', y.ot, st.move) : null;
       const bed = home != null ? Math.max(now, home) : now; // 잠들기 = max(지금, 집 도착)
@@ -168,10 +179,83 @@
     });
   }
 
+  /* 일주일 슬라이드(v11): 오늘이 아닌 날짜 d의 페이지 계산 (spec 6-1장)
+     근무일 = 그날 근무. 잠들기는 전날 C조일 때만 집 도착(+밥) 고정, 그 밖은 기준 없음(sleep null → 「그날이 되면 보여요」)
+     휴무 = 휴무 화면. 전날 C조면 집 도착부터, 아니면 기준 없음. 「지금」은 쓰지 않는다 */
+  function nextWork(st, d) {
+    for (let x = d + 1; x <= d + 62; x++) {
+      const r = st.roster[dayToKey(x)];
+      if (r && SHIFTS[r.s]) return { day: x, key: dayToKey(x), s: r.s, ot: r.ot };
+    }
+    return null;
+  }
+  function computeDay(st, now, d) {
+    const key = dayToKey(d), r = st.roster[key], today = Math.floor(now / 1440);
+    const common = { key, day: d, now, today, future: true, prog: null, late: false, nowSleep: null };
+    if (!r || !(r.s === 'off' || SHIFTS[r.s])) return Object.assign(common, { type: 'none' });
+    const t = st.days ? st.days[key] || null : null;
+    const tasks = t ? t.tasks : st.base, total = sumM(tasks);
+    const p = st.roster[dayToKey(d - 1)], prevC = !!p && p.s === 'C';
+    const home = prevC ? homeArrival(d - 1, 'C', p.ot, st.move) : null;
+    if (r.s === 'off') {
+      const wakeClock = t && t.wake != null ? t.wake : (home != null ? 15 * 60 : 10 * 60);
+      let wake;
+      if (home != null) { wake = Math.floor(home / 1440) * 1440 + wakeClock; while (wake < home + 30) wake += 1440; }
+      else wake = d * 1440 + wakeClock;
+      return Object.assign(common, {
+        type: 'off', todayOff: true, offN: offNth(st, d), target: nextWork(st, d), tasks, total,
+        home, bed: home, wakeClock, wake, end: wake + total, sleep: home != null ? wake - home : null, rest: t ? !!t.rest : false,
+      });
+    }
+    const opts = depOptions(d, r.s, r.ot, st.move, st.early);
+    const saved = t ? t.mode : null;
+    const o = opts.find(x => x.k === saved) || opts.find(x => x.k === defaultMode(r.s, r.ot));
+    const T = { day: d, key, s: r.s, ot: r.ot, opts, mode: o.k, dep: o.dep };
+    const meal = t ? t.meal : 60, eat = t ? !!t.eat : false;
+    const bed = prevC ? home + (eat ? meal : 0) : null;
+    const wake = T.dep - total, S = SHIFTS[r.s];
+    return Object.assign(common, {
+      type: 'work', todayOff: false, offN: 0, target: T, tasks, total, prevC, home, eat, meal, bed, wake,
+      sleep: bed != null ? wake - bed : null,
+      dep: T.dep, mode: T.mode, opts, early: earlyFor(r.ot, st.early),
+      start: workStart(d, r.s, r.ot), shiftStart: d * 1440 + S.start,
+      end: workEnd(d, r.s, r.ot), bus: d * 1440 + S.bus, homeAfter: homeArrival(d, r.s, r.ot, st.move),
+    });
+  }
+
+  /* v10 → v11 저장 이전: today(계산 대상 근무 키 하나) → days[today.key]. 할 일에 done:false.
+     v10 휴무 화면 상태는 다음 근무 키에 있었으므로, 지금 오늘 화면이 그 휴무 화면이면 오늘 날짜 키에도 복사(친구 화면 그대로 유지).
+     st를 직접 바꾸고, 옮긴 것이 있으면 true */
+  function migrateToday(st, now) {
+    if (!st.days || typeof st.days !== 'object') st.days = {};
+    const old = st.today;
+    delete st.today;
+    if (!old || typeof old.key !== 'string' || !Array.isArray(old.tasks)) return false;
+    const conv = () => ({
+      tasks: old.tasks.map(x => ({ n: x.n, m: x.m, done: false })),
+      removed: Array.isArray(old.removed) ? old.removed.map(x => ({ n: x.n, m: x.m })) : [],
+      mode: old.mode == null ? null : old.mode, eat: !!old.eat, meal: Number.isFinite(old.meal) ? old.meal : 60,
+      rest: !!old.rest, wake: old.wake == null ? null : old.wake,
+    });
+    if (!st.days[old.key]) st.days[old.key] = conv();
+    const v = computeToday(Object.assign({}, st, { days: null, today: old }), now);
+    const tk = dayToKey(Math.floor(now / 1440));
+    if (v.type === 'off' && v.target && v.target.key === old.key && !st.days[tk]) st.days[tk] = conv();
+    return true;
+  }
+  /* 지난 날짜 정리: 오늘 − 13일보다 앞선 키를 지운다(사용 기록과 같은 14일 기준). 지운 개수 */
+  function pruneDays(st, now) {
+    const min = dayToKey(Math.floor(now / 1440) - 13);
+    let n = 0;
+    Object.keys(st.days || {}).forEach(k => { if (k < min) { delete st.days[k]; n++; } });
+    return n;
+  }
+
   const api = {
     SHIFTS, OT_MIN, RANGE_START, RANGE_END, ANCHOR, ORDER, CYCLE,
     keyToDay, dayToKey, nowAbs, fmt, dur, fillRoster, defaultRoster, earlyFor, defaultMode,
     depOptions, homeArrival, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
+    dayOf, sumM, nextWork, computeDay, migrateToday, pruneDays,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ShiftCalc = api;

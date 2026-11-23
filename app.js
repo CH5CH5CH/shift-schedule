@@ -31,18 +31,35 @@
       move: { bus: 40, taxi: 20, car: 50, ride: 70 },
       early: { m: 40, sc: 'ot' },
       theme: { c: 'p2', d: 'd' },
-      today: null,
+      days: {}, // 날짜 키별 할 일·이동수단·밥·휴무 옵션(v11). 손대지 않은 날은 없음
       usage: [], // 오늘 탭이 화면에 보인 날짜(YYYY-MM-DD), 최근 14일만. 서버 전송 없음
     };
   }
   const isList = a => Array.isArray(a) && a.every(x => x && typeof x.n === 'string' && Number.isFinite(x.m));
+  /* v11 날짜별 상태: 항목 이름, 시간(분, 선택), 순서(배열 순서), 체크 상태(done — 화면은 아직 없음) */
+  const isTask = x => x && typeof x.n === 'string' && (x.m === undefined || Number.isFinite(x.m));
+  function readDays(d) {
+    const out = {};
+    if (!d || typeof d !== 'object') return out;
+    Object.keys(d).forEach(k => {
+      const v = d[k];
+      if (!isDayKey(k) || !v || !Array.isArray(v.tasks) || !v.tasks.every(isTask)) return;
+      out[k] = {
+        tasks: v.tasks.map(x => ({ n: x.n, m: x.m, done: !!x.done })),
+        removed: Array.isArray(v.removed) ? v.removed.filter(isTask).map(x => ({ n: x.n, m: x.m })) : [],
+        mode: typeof v.mode === 'string' ? v.mode : null, eat: !!v.eat, meal: Number.isFinite(v.meal) ? v.meal : 60,
+        rest: !!v.rest, wake: Number.isFinite(v.wake) ? v.wake : null,
+      };
+    });
+    return out;
+  }
   const isDayKey = k => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
   /* 데이터 보존 원칙 3번: 읽지 못한 저장값은 지우지 않고 다른 키에 백업한 뒤 기본값으로 시작 */
-  let backedUp = '';
-  function backup(raw) {
+  let backedUp = '', migrated = false;
+  function backup(raw, notify = true) { // notify=false: v11 이전용 백업(읽기 실패가 아니므로 안내 문구를 띄우지 않음)
     const n = new Date(), p = x => String(x).padStart(2, '0');
     const k = `${KEY}-backup-${n.getFullYear()}${p(n.getMonth() + 1)}${p(n.getDate())}-${p(n.getHours())}${p(n.getMinutes())}${p(n.getSeconds())}`;
-    try { localStorage.setItem(k, raw); backedUp = k; } catch (e) { backedUp = ''; }
+    try { localStorage.setItem(k, raw); if (notify) backedUp = k; } catch (e) { if (notify) backedUp = ''; }
   }
   function load() {
     const d = defaults();
@@ -53,7 +70,7 @@
     try { s = JSON.parse(raw); } catch (e) { s = null; }
     if (!s || typeof s !== 'object' || s.v !== 1) { backup(raw); return d; }
     try {
-      return {
+      const o = {
         v: 1,
         roster: Object.assign(d.roster, s.roster && typeof s.roster === 'object' ? s.roster : {}),
         base: isList(s.base) ? s.base : d.base,
@@ -61,9 +78,15 @@
         move: Object.assign(d.move, s.move),
         early: Object.assign(d.early, s.early),
         theme: Object.assign(d.theme, s.theme),
+        days: readDays(s.days),
+        // v10 형식 오늘 상태 — 아래에서 days로 옮기고 지운다(저장 형식 번호는 1 그대로, 롤백 호환)
         today: s.today && isList(s.today.tasks) ? Object.assign({ removed: [] }, s.today) : null,
         usage: Array.isArray(s.usage) ? s.usage.filter(isDayKey) : [],
       };
+      const now = C.nowAbs(new Date());
+      if (o.today) { backup(raw, false); migrated = C.migrateToday(o, now); } else delete o.today;
+      if (C.pruneDays(o, now)) migrated = true;
+      return o;
     } catch (e) { backup(raw); return d; }
   }
   let saveFailed = false;
@@ -72,7 +95,9 @@
     catch (e) { saveFailed = true; }
   }
   const S = load();
-  const freshToday = key => ({ key, tasks: clone(S.base).map(t => ({ n: t.n, m: t.m })), removed: [], mode: null, eat: false, meal: 60, rest: false, wake: null });
+  if (migrated) save(); // 이전·정리 결과를 바로 저장(원본은 백업 키에 있음)
+  const freshDay = () => ({ tasks: clone(S.base).map(t => ({ n: t.n, m: t.m, done: false })), removed: [], mode: null, eat: false, meal: 60, rest: false, wake: null });
+  const dayEdit = k => S.days[k] || (S.days[k] = freshDay());
 
   /* ───────── 테마 ───────── */
   function applyTheme() {
@@ -131,6 +156,7 @@
         let to = from;
         try { g.setPointerCapture(e.pointerId); } catch (_) {}
         dragging = true; it.classList.add('dragging'); list.classList.add('sorting');
+        const trk = list.closest('.dtrack'); if (trk) trk.classList.add('lock'); // 손잡이에서 시작한 드래그는 넘기기 금지(v11)
         g.onpointermove = ev => {
           const dy = ev.clientY - y0;
           it.style.transform = `translateY(${dy}px) scale(1.02)`;
@@ -153,7 +179,7 @@
           g.onpointermove = g.onpointerup = g.onpointercancel = null;
           dragging = false;
           items.forEach(x => (x.style.transform = ''));
-          it.classList.remove('dragging'); list.classList.remove('sorting');
+          it.classList.remove('dragging'); list.classList.remove('sorting'); if (trk) trk.classList.remove('lock');
           if (to !== from) onMove(from, to);
         };
         g.onpointerup = end; g.onpointercancel = end;
@@ -187,27 +213,27 @@
   function tasksHTML(tasks, from, freshIdx) {
     let t = from;
     return tasks.map((k, i) => {
-      const h = `<div class="tk${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + k.m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(k.m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
-      t += k.m; return h;
+      const m = Number.isFinite(k.m) ? k.m : 0;
+      const h = `<div class="tk${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
+      t += m; return h;
     }).join('');
   }
-  function spareHTML() {
-    const rm = S.today.removed || [], names = new Set(rm.map(x => x.n));
+  function spareHTML(key) {
+    const d = key ? S.days[key] : null, rm = d ? d.removed : [], names = new Set(rm.map(x => x.n));
     return rm.map((x, i) => `<button data-act="back" data-i="${i}">+ ${esc(x.n)} ${dur(x.m)}</button>`).join('')
       + S.tpl.map((x, i) => names.has(x.n) ? '' : `<button data-act="tpl" data-i="${i}">+ ${esc(x.n)} ${dur(x.m)}</button>`).join('')
       + '<button class="addbtn" data-act="add">+ 새 할 일</button>';
   }
 
-  /* ───────── ① 오늘 ───────── */
+  /* ───────── ① 오늘 (v11: 오늘~6일 뒤 7페이지) ───────── */
+  // 페이지 0 = #today(오늘 페이지, v10과 같은 계산). 1~6 = 미래 날짜(C.computeDay). spec 6-1장
+  const DAYS = 7;
   const todayEl = $('#today'), todayView = todayEl.closest('.view'), restfx = $('#restfx');
-  let freshIdx = -1, lastVM = null;
-
-  function computeVM() {
-    const now = nowAbs();
-    let v = C.computeToday(S, now);
-    if (!S.today || S.today.key !== v.key) { S.today = freshToday(v.key); save(); v = C.computeToday(S, now); }
-    return v;
-  }
+  const dtrack = $('#dtrack'), ddots = $('#ddots');
+  for (let i = 1; i < DAYS; i++) { const p = document.createElement('div'); p.className = 'screen dpage'; p.dataset.i = i; dtrack.appendChild(p); }
+  const pageEls = $$('.dpage', dtrack);
+  ddots.innerHTML = pageEls.map((_, i) => `<i data-i="${i}"></i>`).join('');
+  let fresh = { page: -1, idx: -1 }, lastVM = null, pages = [], curPage = 0;
 
   /* 사용 기록: 오늘 탭이 화면에 보인 날만, 최근 14일 보관 */
   function recordUse() {
@@ -223,52 +249,95 @@
     return S.usage.filter(x => x >= from && x <= to).length;
   }
 
-  function renderToday(animate = true) {
-    recordUse();
-    const v = lastVM = computeVM();
-    let h = '';
-    if (v.type === 'none') {
-      todayView.classList.remove('resting');
-      h = `<div class="head a1"><div><div class="label num">${v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `지금 ${fmt(v.now)}`}</div><div class="shift">다음 근무가 없어요</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>
-        <div class="glass hero a2 empty"><b>근무표에 다음 근무가 없어요</b><span class="label">근무표 탭에서 근무조를 채우면 여기서 잘 수 있는 시간을 계산해요.</span></div>`;
-      todayEl.innerHTML = h; return;
-    }
-    if (v.type === 'off') h = offHTML(v); else h = workHTML(v);
-    todayEl.innerHTML = h;
-    const big = $('[data-sleep]', todayEl);
-    if (big) countSleep(big, v.sleep, animate);
-    freshIdx = -1;
-    const tt = $('.tt', todayEl);
-    if (tt) sortable(tt, '.tk', (f, t) => { moveItem(S.today.tasks, f, t); save(); renderToday(); });
-    const resting = v.type === 'off' && v.rest;
-    todayView.classList.toggle('resting', resting);
-    if (resting && !restfx.children.length) restfx.innerHTML = PHRASES.map((p, i) => `<span class="ph p${i}">${p}</span>`).join('');
+  /* 페이지 계산: 오늘 = computeToday. 오늘 페이지가 이미 계산 중인 근무의 날짜면 같은 숫자(②), 그 밖은 computeDay */
+  function computePages() {
+    const now = nowAbs(), today = Math.floor(now / 1440);
+    const v0 = C.computeToday(S, now);
+    return pageEls.map((_, i) => {
+      const d = today + i, date = C.dayToKey(d);
+      let vm, dup = false;
+      if (i === 0) vm = v0;
+      else if (v0.type === 'work' && v0.target.key === date) { vm = v0; dup = true; }
+      else vm = C.computeDay(S, now, d);
+      // 상태 키: 근무 계산은 근무 시작 날짜, 휴무 화면은 그 페이지 날짜(오늘 페이지는 오늘), 없음은 null
+      const key = vm.type === 'work' ? vm.target.key : vm.type === 'off' ? vm.key : null;
+      return { i, d, date, vm, dup, key, isToday: i === 0 };
+    });
   }
 
-  function workHTML(v) {
-    const T = v.target, t = S.today;
+  const REL = ['오늘', '내일', '모레'];
+  function dheadHTML(P) {
+    return `<div class="month dhead a1"><h2 class="num" data-dtitle>${md(P.date)} (${dow(P.date)})${REL[P.i] ? `<span class="rel"> · ${REL[P.i]}</span>` : ''}</h2>${P.isToday ? '' : '<button class="golink" data-act="gotoday">오늘로</button>'}</div>`;
+  }
+
+  function renderToday(animate = true) {
+    recordUse();
+    pages = computePages();
+    lastVM = pages[0].vm;
+    pages.forEach(P => {
+      const el = pageEls[P.i], v = P.vm;
+      let h = dheadHTML(P);
+      if (v.type === 'none') {
+        if (P.isToday) h += `<div class="head a1"><div><div class="label num">${v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `지금 ${fmt(v.now)}`}</div><div class="shift">다음 근무가 없어요</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>
+        <div class="glass hero a2 empty"><b>근무표에 다음 근무가 없어요</b><span class="label">근무표 탭에서 근무조를 채우면 여기서 잘 수 있는 시간을 계산해요.</span></div>`;
+        else h += `<div class="glass hero a2 empty"><b>이 날은 근무표에 없어요</b><span class="label">근무표는 2026년 11월 ~ 2027년 6월이에요.</span></div>`;
+        el.innerHTML = h; return;
+      }
+      h += v.type === 'off' ? offHTML(v, P) : workHTML(v, P);
+      el.innerHTML = h;
+      const big = $('[data-sleep]', el);
+      if (big) { if (P.isToday) countSleep(big, v.sleep, animate); else big.innerHTML = sleepHTML(v.sleep); big.classList.toggle('short', v.sleep < 0); }
+      const tt = $('.tt', el);
+      if (tt) sortable(tt, '.tk', (f, t) => { moveItem(dayEdit(P.key).tasks, f, t); save(); renderToday(); });
+    });
+    fresh = { page: -1, idx: -1 };
+    setPage(curPage, false);
+  }
+
+  /* 넘기기: 현재 페이지에 맞춰 점·휴식 효과를 바꾼다 */
+  function setPage(i, scroll = true) {
+    curPage = clamp(i, 0, DAYS - 1);
+    if (scroll) dtrack.scrollTo({ left: curPage * dtrack.clientWidth, behavior: reduce ? 'auto' : 'smooth' });
+    $$('i', ddots).forEach((x, k) => x.classList.toggle('on', k === curPage));
+    const P = pages[curPage], resting = !!P && P.vm.type === 'off' && P.vm.rest;
+    todayView.classList.toggle('resting', resting);
+    if (resting && !restfx.children.length) restfx.innerHTML = PHRASES.map((p, k) => `<span class="ph p${k}">${p}</span>`).join('');
+    todayView.dataset.page = curPage;
+    if (document.getElementById('app').dataset.tab === 'today' && pageEls[curPage]) document.getElementById('app').style.setProperty('--sy', pageEls[curPage].scrollTop);
+  }
+  let dscroll;
+  dtrack.addEventListener('scroll', () => {
+    clearTimeout(dscroll);
+    dscroll = setTimeout(() => { const i = Math.round(dtrack.scrollLeft / dtrack.clientWidth); if (i !== curPage && i >= 0 && i < DAYS) setPage(i, false); }, 80);
+  }, { passive: true });
+  ddots.addEventListener('click', e => { const x = e.target.closest('i'); if (x) setPage(+x.dataset.i); });
+
+  function workHTML(v, P) {
+    const T = v.target, t = P.key ? S.days[P.key] : null, tasks = v.tasks, today = P.isToday;
     const otTxt = T.ot === 'pre' ? '전OT' : T.ot === 'post' ? '후OT' : '';
     const dayWord = T.day === v.today ? '오늘' : T.day === v.today + 1 ? '내일' : md(T.key);
     let h = '';
     if (T.ot) h += `<button class="otbanner" data-act="roster"><span class="ico">OT</span><div><b>${dayWord}은 ${otTxt} 날이에요</b><small>${T.ot === 'pre'
       ? `평소보다 ${dur(C.OT_MIN)} 일찍 · ${fmt(v.start)}부터 근무 · 출근 버스 없음`
       : `평소보다 ${dur(C.OT_MIN)} 늦게 · ${fmt(v.end)}까지 근무 · 퇴근 버스 없음`}</small></div><span class="more">근무표 ›</span></button>`;
-    const lab = v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
+    const lab = v.future ? (v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : '다음 근무')
+      : v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
     h += `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${dayWord} ${T.s}조 · ${fmt(v.start)} 출근${otTxt ? `<span class="otbadge">${otTxt}</span>` : ''}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
-    if (v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
+    if (today && v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
+    const noBed = v.sleep == null; // 미래 페이지, 전날 C조가 아님 → 잠들기 기준 없음(①)
     // 전날 C조면 잠들기는 집 도착(+밥)으로 고정(QA-004). 그 밖에 지금이 집 도착보다 늦으면 막대는 지금부터
     const fromNow = !v.prevC && (v.home == null || v.now >= v.home);
     const parts = [];
     if (!fromNow && v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
-    t.tasks.forEach(k => parts.push({ cls: 't', m: k.m, txt: k.n }));
-    h += `<div class="glass hero a2"><div class="label">오늘 잘 수 있는 시간</div><div class="big num" data-sleep></div>
-      <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
-      <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div></div>`;
-    if (v.prevC && v.nowSleep > 0) h += `<p class="nowline label num a2" data-nowsleep>지금 자면 ${durSigned(v.nowSleep)}</p>`;
+    tasks.forEach(k => parts.push({ cls: 't', m: k.m, txt: k.n }));
+    h += `<div class="glass hero a2"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
+      <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${!noBed && v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
+      ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div>`}</div>`;
+    if (today && v.prevC && v.nowSleep > 0) h += `<p class="nowline label num a2" data-nowsleep>지금 자면 ${durSigned(v.nowSleep)}</p>`;
     if (v.prevC) h += `<div class="sec a3"><span class="label">집에 오면</span><div class="seg glass">${[[0, '바로 자기', fmt(v.home)], [1, '밥 먹고 자기', fmt(v.home + v.meal)]]
       .map(([k, l, tm]) => `<button data-act="eat" data-k="${k}" class="${+v.eat === k ? 'on' : ''}">${l}<small class="num">${tm} 잠들기</small></button>`).join('')}</div></div>`;
-    h += `<div class="sec a3"><span class="label">오늘 어떻게 가요?</span><div class="seg glass">${v.opts
+    h += `<div class="sec a3"><span class="label">${today ? '오늘 어떻게 가요?' : '어떻게 가요?'}</span><div class="seg glass">${v.opts
       .map(o => `<button data-act="mode" data-k="${o.k}" class="${o.k === v.mode ? 'on' : ''}">${o.label}<small class="num">${fmt(o.dep)} 출발</small></button>`).join('')}</div></div>`;
     // 시간표
     let tt = '';
@@ -276,9 +345,9 @@
     if (v.prevC) {
       if (v.eat) tt += ev('meal', fmt(v.home), `밥 먹기<small>~${fmt(v.home + v.meal)}까지</small>`, `<button class="tpill num hit" data-act="meal">${dur(v.meal)}</button>`);
     }
-    tt += ev('', fmt(v.bed), `잠들기<small>${v.sleep > 0 ? dur(v.sleep) + ' 자요' : ''}</small>`);
-    tt += ev('key', v.sleep < 0 ? '—' : fmt(v.wake), '일어나기');
-    tt += tasksHTML(t.tasks, v.wake, freshIdx);
+    if (!noBed) tt += ev('', fmt(v.bed), `잠들기<small>${v.sleep > 0 ? dur(v.sleep) + ' 자요' : ''}</small>`);
+    tt += ev('key', !noBed && v.sleep < 0 ? '—' : fmt(v.wake), '일어나기');
+    tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1);
     const how = { bus: '시내버스로', taxi: T.ot === 'pre' ? '택시로 회사까지' : '택시로', car: '차로 회사까지' }[v.mode];
     tt += ev('key', fmt(v.dep), `집에서 출발<small>${how}${v.early ? ` · 여유 ${v.early}분` : ''}</small>`);
     if (v.mode !== 'car' && T.ot !== 'pre') tt += ev('', fmt(v.bus), '통근버스 타기');
@@ -287,34 +356,36 @@
     if (T.ot === 'post') tt += ev('ot', fmt(v.end), `<b>후OT 끝</b><small>${T.s}조 근무는 ${fmt(v.end - C.OT_MIN)}까지</small>`);
     const nextDay = Math.floor(v.homeAfter / 1440) > T.day;
     tt += ev('home', fmt(v.homeAfter), `집 도착<small>${T.ot === 'post' ? '택시·차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}</small>`);
-    h += `<div class="sec a4"><div class="sec-t"><span class="label">오늘 시간표</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
-      <div class="glass tt">${tt}</div><div class="spare">${spareHTML()}</div></div>`;
+    h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
+      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key)}</div></div>`;
     return h;
   }
 
-  function offHTML(v) {
-    const T = v.target, t = S.today;
-    const lab = v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `${v.home != null ? fmt(v.home) + ' 집 도착' : '지금 ' + fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '오늘 근무 끝'}`;
-    let h = `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${v.todayOff ? '오늘은 쉬는 날' : '오늘 근무 끝 · 쉬는 시간'}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
+  function offHTML(v, P) {
+    const T = v.target, tasks = v.tasks, today = P.isToday;
+    const lab = v.future ? `${v.home != null ? fmt(v.home) + ' 집 도착 · ' : ''}휴무 ${v.offN}일째`
+      : v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `${v.home != null ? fmt(v.home) + ' 집 도착' : '지금 ' + fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '오늘 근무 끝'}`;
+    let h = `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${!today ? '쉬는 날' : v.todayOff ? '오늘은 쉬는 날' : '오늘 근무 끝 · 쉬는 시간'}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     h += `<div class="sec a2 restsec"><div class="seg glass">${[[0, '계획 세우기', '일어날 시간 정하기'], [1, '아무것도 안 정할래', '알람 없는 날']]
       .map(([k, l, s]) => `<button data-act="rest" data-k="${k}" class="${+v.rest === k ? 'on' : ''}">${l}<small>${s}</small></button>`).join('')}</div></div>`;
     if (v.rest) return h;
-    const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(t.tasks.map(k => ({ cls: 't', m: k.m, txt: k.n })));
-    h += `<div class="glass hero a2" style="margin-top:0"><div class="label">오늘 잘 수 있는 시간</div><div class="big num" data-sleep></div>
+    const noBed = v.sleep == null;
+    const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(tasks.map(k => ({ cls: 't', m: k.m, txt: k.n })));
+    h += `<div class="glass hero a2" style="margin-top:0"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
       <div class="pair"><button class="pill wake" data-act="wake"><small>일어나기</small><b class="num" data-wake>${fmt(v.wake)}</b></button><div class="pill"><small>할 일 끝</small><b class="num" data-dep>${fmt(v.end)}</b></div></div>
-      <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null && v.bed === v.home ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div></div>`;
+      ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null && v.bed === v.home ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div>`}</div>`;
     let tt = '';
     if (v.home != null) tt += ev('', fmt(v.home), '집 도착<small>C조 마지막 근무 끝</small>');
-    tt += ev('', fmt(v.bed), `잠들기<small>${dur(v.sleep)} 자요</small>`);
+    if (!noBed) tt += ev('', fmt(v.bed), `잠들기<small>${dur(v.sleep)} 자요</small>`);
     tt += ev('key', fmt(v.wake), '일어나기', `<button class="tpill num hit" data-act="wake">${fmt(v.wake)}</button>`);
-    tt += tasksHTML(t.tasks, v.wake, freshIdx);
-    tt += ev('key', fmt(v.end), `할 일 끝<small>그다음은 자유 · 다음 근무 ${md(T.key)} ${T.s}조</small>`);
-    h += `<div class="sec a4"><div class="sec-t"><span class="label">오늘 시간표</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
-      <div class="glass tt">${tt}</div><div class="spare">${spareHTML()}</div></div>`;
+    tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1);
+    tt += ev('key', fmt(v.end), `할 일 끝<small>그다음은 자유${T ? ` · 다음 근무 ${md(T.key)} ${T.s}조` : ''}</small>`);
+    h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
+      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key)}</div></div>`;
     return h;
   }
 
-  function addTaskSheet() {
+  function addTaskSheet(P) {
     const names = [...new Set([...S.tpl, ...S.base].map(x => x.n))];
     const lookup = n => ([...S.tpl, ...S.base].find(x => x.n === n) || { m: 30 }).m;
     let pn = names[0] || '', pm = lookup(pn), custom = !names.length, typed = '';
@@ -335,28 +406,34 @@
       else if (b.dataset.m != null) { pm = PRESET_T[+b.dataset.m]; draw(); }
       else if (b.hasAttribute('data-go')) {
         const n = (custom ? typed.trim() : pn).slice(0, NAME_MAX) || '새 할 일';
-        S.today.tasks.push({ n, m: pm }); freshIdx = S.today.tasks.length - 1; save(); closeSheet(); renderToday();
+        const t = dayEdit(P.key);
+        t.tasks.push({ n, m: pm, done: false }); fresh = { page: P.i, idx: t.tasks.length - 1 }; save(); closeSheet(); renderToday();
       } else if (b.hasAttribute('data-x')) closeSheet();
     });
     draw();
   }
 
-  todayEl.addEventListener('click', e => {
+  dtrack.addEventListener('click', e => {
     const b = e.target.closest('[data-act]'); if (!b) return;
-    const a = b.dataset.act, i = +b.dataset.i, t = S.today, v = lastVM;
+    const pg = b.closest('.dpage'); if (!pg) return;
+    const P = pages[+pg.dataset.i]; if (!P) return;
+    const a = b.dataset.act, i = +b.dataset.i, v = P.vm;
+    if (a === 'gotoday') { setPage(0); return; }
+    // 근무일 계산이면 그 근무 날짜, 휴무 화면·다음 근무 없음이면 그 페이지 날짜의 시트를 연다(QA-003: 휴무 날도 시트가 열림)
+    if (a === 'roster') { go('roster'); Roster.openDay(v && v.target && v.type === 'work' ? v.target.key : P.date); return; }
+    if (!P.key) return;
+    const t = () => dayEdit(P.key); // 손대는 순간 그 날짜 상태를 만든다(손대지 않은 날은 저장하지 않음)
     const done = () => { save(); renderToday(); };
-    // 근무일 계산이면 그 근무 날짜, 휴무 화면·다음 근무 없음이면 오늘 날짜의 시트를 연다(QA-003: 휴무 날도 시트가 열림)
-    if (a === 'roster') { go('roster'); Roster.openDay(v && v.target && v.type === 'work' ? v.target.key : C.dayToKey(Math.floor(nowAbs() / 1440))); }
-    else if (a === 'mode') { t.mode = b.dataset.k; done(); }
-    else if (a === 'eat') { t.eat = b.dataset.k === '1'; done(); }
-    else if (a === 'rest') { t.rest = b.dataset.k === '1'; done(); }
-    else if (a === 'meal') timeSheet({ title: '자기 전 밥', val: t.meal, presets: PRESET_T, max: 240, onChange: x => { t.meal = x; done(); } });
-    else if (a === 'dur') { const k = t.tasks[i]; timeSheet({ title: k.n + ' 시간', val: k.m, presets: PRESET_T, onChange: x => { k.m = x; done(); } }); }
-    else if (a === 'del') { t.removed.push(t.tasks.splice(i, 1)[0]); done(); }
-    else if (a === 'back') { t.tasks.push(t.removed.splice(i, 1)[0]); freshIdx = t.tasks.length - 1; done(); }
-    else if (a === 'tpl') { const k = S.tpl[i]; t.tasks.push({ n: k.n, m: k.m }); freshIdx = t.tasks.length - 1; done(); }
-    else if (a === 'add') addTaskSheet();
-    else if (a === 'wake') timeSheet({ title: '일어날 시간', val: v.wakeClock, presets: WAKES, step: 10, wrap: true, show: m => fmt(m), onChange: x => { t.wake = x; done(); } });
+    if (a === 'mode') { t().mode = b.dataset.k; done(); }
+    else if (a === 'eat') { t().eat = b.dataset.k === '1'; done(); }
+    else if (a === 'rest') { t().rest = b.dataset.k === '1'; done(); }
+    else if (a === 'meal') timeSheet({ title: '자기 전 밥', val: v.meal, presets: PRESET_T, max: 240, onChange: x => { t().meal = x; done(); } });
+    else if (a === 'dur') { const k = v.tasks[i]; timeSheet({ title: k.n + ' 시간', val: k.m, presets: PRESET_T, onChange: x => { t().tasks[i].m = x; done(); } }); }
+    else if (a === 'del') { const d = t(); d.removed.push(d.tasks.splice(i, 1)[0]); done(); }
+    else if (a === 'back') { const d = t(); d.tasks.push(Object.assign(d.removed.splice(i, 1)[0], { done: false })); fresh = { page: P.i, idx: d.tasks.length - 1 }; done(); }
+    else if (a === 'tpl') { const d = t(), k = S.tpl[i]; d.tasks.push({ n: k.n, m: k.m, done: false }); fresh = { page: P.i, idx: d.tasks.length - 1 }; done(); }
+    else if (a === 'add') addTaskSheet(P);
+    else if (a === 'wake') timeSheet({ title: '일어날 시간', val: v.wakeClock, presets: WAKES, step: 10, wrap: true, show: m => fmt(m), onChange: x => { t().wake = x; done(); } });
   });
 
   /* ───────── ② 근무표 ───────── */
@@ -607,10 +684,12 @@
     $$('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     if (tab === 'today') renderToday(); else if (tab === 'roster') Roster.render(); else renderTasks();
     enter(screens[tab]);
-    app.style.setProperty('--sy', screens[tab].scrollTop);
+    app.style.setProperty('--sy', (tab === 'today' ? pageEls[curPage] : screens[tab]).scrollTop);
   }
   $$('.tabbar button').forEach(b => (b.onclick = () => go(b.dataset.tab)));
-  Object.entries(screens).forEach(([k, sc]) => sc.addEventListener('scroll', () => { if (app.dataset.tab === k) app.style.setProperty('--sy', sc.scrollTop); }, { passive: true }));
+  Object.entries(screens).forEach(([k, sc]) => sc.addEventListener('scroll', () => { if (app.dataset.tab === k && (k !== 'today' || curPage === 0)) app.style.setProperty('--sy', sc.scrollTop); }, { passive: true }));
+  // v11: 미래 페이지도 그 페이지의 세로 스크롤로 달을 움직인다(달이 카드 뒤에 남지 않게)
+  pageEls.slice(1).forEach((pe, i) => pe.addEventListener('scroll', () => { if (app.dataset.tab === 'today' && curPage === i + 1) app.style.setProperty('--sy', pe.scrollTop); }, { passive: true }));
   app.addEventListener('pointermove', e => {
     if (e.pointerType !== 'mouse') return;
     const rc = app.getBoundingClientRect(), x = (e.clientX - rc.left) / rc.width - 0.5;
@@ -623,7 +702,7 @@
     if (document.hidden || dragging) return;
     const d = Math.floor(nowAbs() / 1440);
     if (app.dataset.tab === 'today') renderToday(true);
-    if (d !== lastDay) { lastDay = d; Roster.render(); }
+    if (d !== lastDay) { lastDay = d; if (C.pruneDays(S, nowAbs())) save(); curPage = 0; dtrack.scrollLeft = 0; Roster.render(); if (app.dataset.tab === 'today') renderToday(false); }
   }
   setInterval(tick, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });

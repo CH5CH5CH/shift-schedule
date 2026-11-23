@@ -79,7 +79,7 @@ button{-webkit-user-select:none;user-select:none}
 .sec-t{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;row-gap:2px;margin:0 4px 8px}
 /* 유리 카드 안·하늘 위 작은 글자: 연하고 좁은 bg1 halo (DESIGN 4장, 2안 2026-11-23). 단색 바탕에서 halo 없이 4.5:1이 되는 곳은 빼고, 달 바로 위 글자는 칩 */
 :root{--halo:0 0 1px var(--bg1),0 0 2px var(--bg1),0 0 4px color-mix(in srgb,var(--bg1) 80%,transparent),0 0 10px color-mix(in srgb,var(--bg1) 45%,transparent);--chip2:color-mix(in srgb,var(--bg1) 90%,transparent)}
-.label,.hint,.ticks,.rng,.tm,.dow,.legend,.credit,.usage,.big span,.tx small,.nm2 small,.pill:not(.wake) small,.seg button:not(.on),.day.off .c,.otlist .row2,.tpill,.tabbar button,.fillrow{text-shadow:var(--halo)}
+.label,.hint,.ticks,.rng,.tm,.dow,.legend,.credit,.usage,.big span,.tx small,.nm2 small,.pill:not(.wake) small,.seg button:not(.on),.day.off .c,.otlist .row2,.tpill,.tabbar button,.fillrow,.dhead .rel,.sg.t{text-shadow:var(--halo)}
 /* 달 바로 위 작은 글자·버튼: halo 대신 작은 반투명 칩(bg1 90%) */
 .sec-t .hint,.mnav .label,.ticks span,.rhint,.nowline{background:var(--chip2);border-radius:8px;padding:1px 7px;text-shadow:none}
 .restsec .seg{background:var(--chip2)}
@@ -224,6 +224,16 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .day.flash{animation:flash 1s ease}
 .otp{font-size:10px;font-weight:800;line-height:1;padding:3px 5px;border-radius:6px;margin-top:auto;margin-bottom:5px;background:var(--ot);color:var(--oton)}
 .mdots{display:flex;justify-content:center;gap:6px;margin-top:10px}
+/* 오늘 탭 일주일 슬라이드(v11): 근무표 달 넘기기와 같은 scroll-snap·점. 값은 기존 값 재사용 */
+.dtrack{position:absolute;inset:0;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.dtrack::-webkit-scrollbar{display:none}
+.dtrack>.screen{flex:0 0 100%;scroll-snap-align:start;scroll-snap-stop:always;overscroll-behavior-x:auto} /* 가로 밀기는 바깥 트랙으로 넘긴다(세로는 contain 유지) */
+.dtrack.lock{overflow-x:hidden}
+.dnav{position:absolute;left:0;right:0;bottom:calc(78px + var(--tab-b));z-index:5;display:flex;justify-content:center;pointer-events:none}
+.dnav .mdots{margin:0;padding:1px 7px;border-radius:8px;background:var(--chip2);pointer-events:auto;height:16px;align-items:center}
+.dhead{align-items:center}
+.dhead .rel{font-size:16px;font-weight:700}
+.dwait{display:block;margin-top:8px}
 .mdots i{width:6px;height:6px;border-radius:3px;background:var(--muted);opacity:.35;cursor:pointer;transition:width .2s,opacity .2s}
 .mdots i.on{width:16px;opacity:1;background:var(--accent)}
 .palette{display:flex;gap:6px;margin-top:12px}
