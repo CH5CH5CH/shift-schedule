@@ -146,17 +146,21 @@
       });
     }
 
-    /* 근무일 계산. 잠들기 = max(지금, 집 도착 + 자기 전 밥) (spec 6장, 11/23 통일)
+    /* 근무일 계산 (spec 6장)
        집 도착: 대상 근무의 전날이 C조면 그 C조의 집 도착(근무조와 무관 — 연차·대근으로 C조 다음 날이 A·B조인 날 포함).
-       그 밖에 진행 중인 근무가 있으면 그 근무의 집 도착(근무 중 시간을 잠으로 세지 않음, QA-001). 자기 전 밥은 전날 C조일 때만 */
+       그 밖에 진행 중인 근무가 있으면 그 근무의 집 도착(근무 중 시간을 잠으로 세지 않음, QA-001). 자기 전 밥은 전날 C조일 때만
+       잠들기: 전날 C조(「집에 오면」 선택지가 있는 날)는 바로 자기 = 집 도착, 밥 먹고 자기 = 집 도착 + 밥으로 고정 (QA-004, v8).
+       지금이 그 시각을 지났고 기상 전이면 nowSleep(지금 자면)을 따로 준다(기상 이후면 null). 그 밖의 날은 max(지금, 집 도착), 집 도착이 없으면 지금 */
     const p = st.roster[dayToKey(T.day - 1)];
     const prevC = !!p && p.s === 'C';
     const home = prevC ? homeArrival(T.day - 1, 'C', p.ot, st.move) : prog ? prog.home : null;
-    const bed = home != null ? Math.max(now, home + (prevC && eat ? meal : 0)) : now;
+    const bed = prevC ? home + (eat ? meal : 0) : home != null ? Math.max(now, home) : now;
     const wake = T.dep - total;
+    // 「지금 자면」: 지금이 잠들기 시각을 지났고 (기상 − 지금) > 0일 때만. 기상 이후면 숨김(부족 표시 없음)
+    const late = now > bed && wake - now > 0;
     const S = SHIFTS[T.s];
     return Object.assign(base, {
-      type: 'work', prevC, home, eat, meal, bed, wake, sleep: wake - bed,
+      type: 'work', prevC, home, eat, meal, bed, wake, sleep: wake - bed, late, nowSleep: late ? wake - now : null,
       dep: T.dep, mode: T.mode, opts: T.opts, early: earlyFor(T.ot, st.early),
       start: workStart(T.day, T.s, T.ot), shiftStart: T.day * 1440 + S.start,
       end: workEnd(T.day, T.s, T.ot), bus: T.day * 1440 + S.bus,

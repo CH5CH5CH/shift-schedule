@@ -170,6 +170,7 @@
     if (v < 0) return (h ? `${h}<span>시간</span>` : '') + `${m}<span>분 부족</span>`;
     return `${h}<span>시간</span>${m}<span>분</span>`;
   }
+  const durSigned = v => { const a = Math.abs(v), h = Math.floor(a / 60), m = a % 60; return v < 0 ? `${h ? h + '시간 ' : ''}${m}분 부족` : `${h}시간 ${m}분`; };
   let shown = null;
   function countSleep(el, t, animate) {
     const paint = n => { el.innerHTML = sleepHTML(n); el.classList.toggle('short', n < 0); };
@@ -255,8 +256,8 @@
     const lab = v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
     h += `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${dayWord} ${T.s}조 · ${fmt(v.start)} 출근${otTxt ? `<span class="otbadge">${otTxt}</span>` : ''}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     if (v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
-    // 잠들기 = max(지금, 집 도착 + 밥). 지금이 더 늦으면 막대는 지금부터 시작
-    const fromNow = v.home == null || v.now >= v.home + (v.prevC && v.eat ? v.meal : 0);
+    // 전날 C조면 잠들기는 집 도착(+밥)으로 고정(QA-004). 그 밖에 지금이 집 도착보다 늦으면 막대는 지금부터
+    const fromNow = !v.prevC && (v.home == null || v.now >= v.home);
     const parts = [];
     if (!fromNow && v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
@@ -264,7 +265,8 @@
     h += `<div class="glass hero a2"><div class="label">오늘 잘 수 있는 시간</div><div class="big num" data-sleep></div>
       <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
       <div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div></div>`;
-    if (v.prevC) h += `<div class="sec a3"><span class="label">집에 오면</span><div class="seg glass">${[[0, '바로 자기', fmt(Math.max(v.now, v.home))], [1, '밥 먹고 자기', fmt(Math.max(v.now, v.home + v.meal))]]
+    if (v.prevC && v.nowSleep > 0) h += `<p class="nowline label num a2" data-nowsleep>지금 자면 ${durSigned(v.nowSleep)}</p>`;
+    if (v.prevC) h += `<div class="sec a3"><span class="label">집에 오면</span><div class="seg glass">${[[0, '바로 자기', fmt(v.home)], [1, '밥 먹고 자기', fmt(v.home + v.meal)]]
       .map(([k, l, tm]) => `<button data-act="eat" data-k="${k}" class="${+v.eat === k ? 'on' : ''}">${l}<small class="num">${tm} 잠들기</small></button>`).join('')}</div></div>`;
     h += `<div class="sec a3"><span class="label">오늘 어떻게 가요?</span><div class="seg glass">${v.opts
       .map(o => `<button data-act="mode" data-k="${o.k}" class="${o.k === v.mode ? 'on' : ''}">${o.label}<small class="num">${fmt(o.dep)} 출발</small></button>`).join('')}</div></div>`;
@@ -343,7 +345,8 @@
     const b = e.target.closest('[data-act]'); if (!b) return;
     const a = b.dataset.act, i = +b.dataset.i, t = S.today, v = lastVM;
     const done = () => { save(); renderToday(); };
-    if (a === 'roster') { go('roster'); if (v && v.target && v.type === 'work') Roster.openDay(v.target.key); else Roster.showDay(C.dayToKey(Math.floor(nowAbs() / 1440))); }
+    // 근무일 계산이면 그 근무 날짜, 휴무 화면·다음 근무 없음이면 오늘 날짜의 시트를 연다(QA-003: 휴무 날도 시트가 열림)
+    if (a === 'roster') { go('roster'); Roster.openDay(v && v.target && v.type === 'work' ? v.target.key : C.dayToKey(Math.floor(nowAbs() / 1440))); }
     else if (a === 'mode') { t.mode = b.dataset.k; done(); }
     else if (a === 'eat') { t.eat = b.dataset.k === '1'; done(); }
     else if (a === 'rest') { t.rest = b.dataset.k === '1'; done(); }
@@ -411,7 +414,7 @@
       r('pal').style.display = mode === 'shift' ? '' : 'none';
       r('hint').textContent = mode === 'shift'
         ? '근무조를 고르고 날짜를 누르세요'
-        : '날짜를 누르고 전OT·후OT 선택';
+        : '날짜를 눌러 근무조·OT 바꾸기';
       r('otlist').innerHTML = ks.length ? ks.map(k => {
         const v = S.roster[k], [a, b] = T[v.s];
         return `<div class="row2"><span>${md(k)} (${dow(k)}) · ${v.s}조<span class="when num">${f(v.ot === 'pre' ? a - 3 : a)}~${f(v.ot === 'post' ? b + 3 : b)}</span></span><span class="tag">${v.ot === 'pre' ? '전OT' : '후OT'}</span></div>`;
@@ -426,15 +429,27 @@
     }
     function flash(sel) { $$(sel, el).forEach(c => { c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }); }
 
+    /* 날짜 시트: 근무조(A·B·C·휴무) 줄 + OT 버튼. 휴무 날도 열린다(QA-003, v8) */
     function openOT(k) {
       const prev = cur; cur = k;
-      const v = S.roster[k], [a, b] = T[v.s];
-      const draw = () => setSheet(`<h3>${md(k)} (${dow(k)}) · ${v.s}조 ${f(a)}~${f(b)}</h3><span class="label">시간은 앱이 계산해요 · 같은 버튼을 다시 누르면 취소</span>
-        <div class="btns"><button data-ot="pre" class="${v.ot === 'pre' ? 'on' : ''}">전OT<small class="num">${f(a - 3)}부터 근무</small></button><button data-ot="post" class="${v.ot === 'post' ? 'on' : ''}">후OT<small class="num">${f(b + 3)}까지 근무</small></button></div>
+      const v = S.roster[k];
+      const draw = () => {
+        const off = v.s === 'off', [a, b] = off ? [0, 0] : T[v.s];
+        setSheet(`<h3>${md(k)} (${dow(k)}) · ${off ? '휴무' : `${v.s}조 ${f(a)}~${f(b)}`}</h3>
+        <span class="label">근무조 · 누르면 바로 바뀌어요</span>
+        <div class="opts f4" data-r="shiftrow">${[['A', 'A조'], ['B', 'B조'], ['C', 'C조'], ['off', '휴무']].map(([s, l]) => `<button data-shift="${s}" class="${v.s === s ? 'on' : ''}">${l}</button>`).join('')}</div>
+        ${off ? '<span class="label">휴무 날은 OT를 넣을 수 없어요</span>'
+          : `<span class="label">OT · 같은 버튼을 다시 누르면 취소</span>
+        <div class="btns"><button data-ot="pre" class="${v.ot === 'pre' ? 'on' : ''}">전OT<small class="num">${f(a - 3)}부터 근무</small></button><button data-ot="post" class="${v.ot === 'post' ? 'on' : ''}">후OT<small class="num">${f(b + 3)}까지 근무</small></button></div>`}
         <button class="close" data-x>닫기</button>`);
+      };
       openSheet('', e => {
         const bt = e.target.closest('button'); if (!bt) return;
         if (bt.dataset.ot) { v.ot = v.ot === bt.dataset.ot ? '' : bt.dataset.ot; save(); draw(); drawMonth(monthOf(k)); drawSide(); }
+        else if (bt.dataset.shift) {
+          if (v.s !== bt.dataset.shift) { v.s = bt.dataset.shift; if (v.s === 'off') v.ot = ''; save(); }
+          draw(); drawMonth(monthOf(k)); drawSide(); flash(`.day[data-k="${k}"]`);
+        }
         else if (bt.hasAttribute('data-x')) closeSheet();
       }, () => { cur = null; drawMonth(monthOf(k)); });
       draw();
@@ -482,7 +497,7 @@
         if (mode === 'shift') {
           v.s = brush; if (brush === 'off') v.ot = ''; save(); drawMonth(monthOf(k)); drawSide();
           flash(`.day[data-k="${k}"]`);
-        } else if (v.s !== 'off') openOT(k);
+        } else openOT(k);
         return;
       }
       const b = e.target.closest('button,[data-i]'); if (!b) return;
@@ -503,8 +518,7 @@
     }
     return {
       render,
-      openDay(k) { render(); mode = 'ot'; drawAll(); const i = monthOf(k); if (i >= 0) { goMonth(i, false); if (S.roster[k] && S.roster[k].s !== 'off') openOT(k); } },
-      showDay(k) { render(); const i = monthOf(k); if (i >= 0) goMonth(i, false); },
+      openDay(k) { render(); mode = 'ot'; drawAll(); const i = monthOf(k); if (i >= 0) { goMonth(i, false); if (S.roster[k]) openOT(k); } },
       relayout() { if (built) { goMonth(mi, false); } },
     };
   })();
