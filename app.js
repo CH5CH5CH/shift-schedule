@@ -16,7 +16,7 @@
   const PHRASES = ['오늘은 쉬어요~', '오늘은 푹 자요~', '알람 없는 날', '아무것도 안 정해도 괜찮아요', '천천히 일어나요', '달도 쉬어 가는 날'];
   const THEMES = [['p0', '오로라 퍼플'], ['p1', '봄 핑크'], ['p2', '샴페인 문라이트']];
   const W = '일월화수목금토';
-  const NAME_MAX = 10;
+  const NAME_MAX = 50; // v13: 10자 제한 해제(사용자 아이폰 확인), 붙여넣기 대비 상한 50자. 긴 이름은 화면에서 말줄임
   const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const GRIP = '<button class="grip hit" aria-label="끌어서 순서 바꾸기"><svg viewBox="0 0 14 14"><g fill="currentColor"><circle cx="4.5" cy="3" r="1.3"/><circle cx="9.5" cy="3" r="1.3"/><circle cx="4.5" cy="7" r="1.3"/><circle cx="9.5" cy="7" r="1.3"/><circle cx="4.5" cy="11" r="1.3"/><circle cx="9.5" cy="11" r="1.3"/></g></svg></button>';
 
@@ -209,6 +209,8 @@
     moveItem(timed, f, t);
     idx.forEach((i, j) => { list[i] = timed[j]; });
   }
+  /* 끌기 표시: 오늘 시간표(.tk)는 왼쪽 시간선을 제자리에 두고 시각·카드만 움직인다(v13). 그 밖(할 일 설정 목록)은 줄 전체 */
+  const mv = (el, tf) => { const parts = el.matches('.tk') ? el.querySelectorAll(':scope > .tm, :scope > .card') : [el]; parts.forEach(x => (x.style.transform = tf)); };
   function sortable(list, itemSel, onMove) {
     $$(itemSel + ' .grip', list).forEach(g => {
       g.onclick = e => e.stopPropagation();
@@ -223,7 +225,7 @@
         const trk = list.closest('.dtrack'); if (trk) trk.classList.add('lock'); // 손잡이에서 시작한 드래그는 넘기기 금지(v11)
         g.onpointermove = ev => {
           const dy = ev.clientY - y0;
-          it.style.transform = `translateY(${dy}px) scale(1.02)`;
+          mv(it, `translateY(${dy}px) scale(1.02)`);
           const c = rects[from].top + h / 2 + dy; to = from;
           items.forEach((x, i) => {
             if (i === from) return;
@@ -236,13 +238,13 @@
             let s = 0;
             if (from < to && i > from && i <= to) s = -h;
             if (from > to && i < from && i >= to) s = h;
-            x.style.transform = s ? `translateY(${s}px)` : '';
+            mv(x, s ? `translateY(${s}px)` : '');
           });
         };
         const end = () => {
           g.onpointermove = g.onpointerup = g.onpointercancel = null;
           dragging = false;
-          items.forEach(x => (x.style.transform = ''));
+          items.forEach(x => mv(x, ''));
           it.classList.remove('dragging'); list.classList.remove('sorting'); if (trk) trk.classList.remove('lock');
           if (to !== from) onMove(from, to);
         };
@@ -277,7 +279,8 @@
   function tasksHTML(tasks, from, freshIdx) {
     let t = from;
     return tasks.map((k, i) => {
-      if (!Number.isFinite(k.m)) return ''; // 시간 없는 항목은 오늘 시간표에 보이지 않음(v12). data-i는 전체 목록 기준
+      if (!Number.isFinite(k.m)) // v13: 시간 없는 항목은 「시간 정하기」 점선 줄 — 정하기 전에는 0분(계산 그대로), 누르면 시간 시트
+        return `<div class="tk unset${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b></div><div class="ctl"><button class="tpill set hit" data-act="dur" data-i="${i}">시간 정하기</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       const m = k.m;
       const h = `<div class="tk${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       t += m; return h;
@@ -354,7 +357,7 @@
       const big = $('[data-sleep]', el);
       if (big) { if (P.isToday) countSleep(big, v.sleep, animate); else big.innerHTML = sleepHTML(v.sleep); big.classList.toggle('short', v.sleep < 0); }
       const tt = $('.tt', el);
-      if (tt) sortable(tt, '.tk', (f, t) => { moveTimed(dayEdit(P.key).tasks, f, t); save(); savePlan(); renderToday(); });
+      if (tt) sortable(tt, '.tk', (f, t) => { moveItem(dayEdit(P.key).tasks, f, t); save(); savePlan(); renderToday(); }); // v13: 「시간 정하기」 줄도 함께 끌기
     });
     fresh = { page: -1, idx: -1 };
     applyPage(pendingPage != null ? curPage : pageFromScroll());
@@ -505,7 +508,7 @@
     else if (a === 'eat') { t().eat = b.dataset.k === '1'; done(); }
     else if (a === 'rest') { t().rest = b.dataset.k === '1'; done(); }
     else if (a === 'meal') timeSheet({ title: '자기 전 밥', val: v.meal, presets: PRESET_T, max: 240, onChange: x => { t().meal = x; done(); } });
-    else if (a === 'dur') { const k = v.tasks[i]; timeSheet({ title: k.n + ' 시간', val: k.m, presets: PRESET_T, onChange: x => { t().tasks[i].m = x; done(); } }); }
+    else if (a === 'dur') { const k = v.tasks[i], unset = !Number.isFinite(k.m); timeSheet({ title: unset ? `${k.n} · 얼마나 걸려요?` : k.n + ' 시간', val: unset ? 30 : k.m, presets: PRESET_T, onChange: x => { t().tasks[i].m = x; done(); } }); }
     else if (a === 'del') { const it = t().tasks[i]; if (it) removeItem(P.key, it.n); done(); }
     else if (a === 'back') { const d = t(), it = d.removed[i]; if (it && addItem(P.key, it)) { d.removed.splice(i, 1); fresh = { page: P.i, idx: d.tasks.length - 1 }; } done(); }
     else if (a === 'tpl') { const k = S.tpl[i]; if (addItem(P.key, { n: k.n, m: k.m })) fresh = { page: P.i, idx: S.days[P.key].tasks.length - 1 }; done(); }
@@ -769,13 +772,17 @@
       return ['A', 'B', 'C', 'off'].filter(s => n[s]).map(s => `${SNAME[s]} ${n[s]}일`).join(' · ');
     }
     const md2 = k => { const [, m, d] = k.split('-').map(Number); return `${m}/${d}`; };
-    function itemHTML(k, x, big) {
-      return `<div class="item${x.done ? ' done' : ''}${x.carried ? ' carried' : ''}"><button class="ib hit" data-act="chk" data-k="${k}" data-n="${esc(x.n)}"${x.carried ? ' disabled' : ''}><span class="cb"></span><span class="nm">${esc(x.n)}</span>${x.rule ? '<span class="rep" aria-label="매주 반복">↻</span>' : ''}${x.carried ? '<small>→ 오늘</small>' : ''}</button>${big && !x.carried ? `<button class="x hit" data-act="wdel" data-k="${k}" data-n="${esc(x.n)}" aria-label="빼기">×</button>` : ''}</div>`;
+    /* 항목 한 줄. 반복 표시는 글자 꼬리표 「매주」(v13). 하루 보기에서는 체크칸 · 이름(누르면 고치기) · × 가 서로 겹치지 않게 나눈다 */
+    function itemHTML(k, x, big, past) {
+      const tag = x.rule ? '<span class="rep wtag">매주</span>' : '', cf = x.carried ? '<small>→ 오늘</small>' : '', dis = x.carried ? ' disabled' : '';
+      const cls = `item${x.done ? ' done' : ''}${x.carried ? ' carried' : ''}`, at = `data-k="${k}" data-n="${esc(x.n)}"`;
+      if (!big) return `<div class="${cls}"><button class="ib hit" data-act="chk" ${at}${dis}><span class="cb"></span><span class="nm">${esc(x.n)}</span>${tag}${cf}</button></div>`;
+      return `<div class="${cls}"><button class="cbb hit" data-act="chk" ${at} aria-label="체크"${dis}><span class="cb"></span></button><button class="ib nmb" data-act="${past ? 'chk' : 'edit'}" ${at}${dis}><span class="nm">${esc(x.n)}</span>${tag}${cf}</button>${x.carried ? '' : `<button class="x hit" data-act="wdel" ${at} aria-label="빼기">×</button>`}</div>`;
     }
     function cellHTML(d, big) {
       const k = K(d), items = C.weekItems(ST(), k), past = d < tday();
       return `<div class="dc glass${big ? ' focus' : ''}${d === tday() ? ' tdy' : ''}" data-k="${k}"><div class="dhd"><span class="d">${dow(k)} <small>${md2(k)}</small></span>${badge(k)}</div>
-        <div class="items">${items.map(x => itemHTML(k, x, big)).join('')}</div>${past ? '' : `<button class="addi" data-act="add" data-k="${k}">+ 추가</button>`}</div>`;
+        <div class="items">${items.map(x => itemHTML(k, x, big, past)).join('')}</div>${past ? '' : `<button class="addi" data-act="add" data-k="${k}">+ 추가</button>`}</div>`;
     }
     function render() {
       const t = tday();
@@ -805,71 +812,111 @@
     }
     const done = () => { save(); savePlan(); render(); };
 
-    /* 「+ 추가」 시트(W3): 이름 → 넣을 날 → 요일 → 매주 반복 → 추가. 같은 이름이 있는 날·지난 날은 건너뜀 */
-    function addSheet(k0) {
+    /* 「+ 추가」 · 「할 일 고치기」 같은 시트(W3, v13): 이름은 직접 입력만 → 넣을 날 → 요일 → 매주 반복.
+       추가는 시간 없음(오늘 탭에서 「시간 정하기」). 고치기는 지금 값이 미리 들어가고 버튼이 「고치기」 */
+    function addSheet(k0, edit) {
       const d0 = C.keyToDay(k0), mon = C.weekStart(d0), t = tday();
       const days = Array.from({ length: 7 }, (_, i) => mon + i), future = days.filter(d => d >= t);
-      const chips = [...new Map([...S.tpl, ...S.base].map(x => [x.n, x])).values()];
-      let pick = -1, typed = '', custom = false, mode = 'one', picked = new Set([d0]), quick = null, rep = false;
-      const name = () => (custom ? typed.trim() : pick >= 0 ? chips[pick].n : '').slice(0, NAME_MAX);
-      const mins = () => (!custom && pick >= 0 ? chips[pick].m : undefined); // 칩을 고르면 그 시간, 직접 입력은 시간 없음
+      const isWork = d => { const r = S.roster[K(d)]; return !!r && r.s !== 'off'; };
+      let typed = '', mode = 'one', picked = new Set([d0]), quick = null, rep = false;
+      const ru = edit && edit.rule ? PL.rules.find(r => r.id === edit.rule) : null;
+      if (edit) {
+        typed = edit.n;
+        if (ru) {
+          rep = true;
+          if (ru.kind === 'daily') mode = 'all';
+          else if (ru.kind === 'wd') { mode = 'pick'; picked = new Set(future.filter(d => ru.wd.includes(C.weekday(d)))); picked.add(d0); }
+          else { mode = 'pick'; quick = ru.kind; picked = new Set(future.filter(d => (ru.kind === 'work') === isWork(d))); picked.add(d0); }
+        }
+      }
+      const name = () => typed.trim().slice(0, NAME_MAX);
       const targets = () => (mode === 'one' ? [d0] : mode === 'all' ? future : future.filter(d => picked.has(d)));
       const will = () => { const n = name(); return n ? targets().filter(d => !hasName(K(d), n)) : []; };
-      const isWork = d => { const r = S.roster[K(d)]; return !!r && r.s !== 'off'; };
+      const dup = () => !!edit && name() !== edit.n && hasName(k0, name()); // 고치기: 같은 날 같은 이름
+      const label = () => {
+        const n = name(), tg = targets();
+        if (!n) return '이름을 적어 주세요';
+        if (!tg.length) return '날을 골라 주세요';
+        if (edit) return '고치기';
+        const w = will(); return !w.length ? '이미 모두 있어요' : `${w.length}일에 추가${rep ? ' · 매주 반복' : ''}`;
+      };
+      const ok = () => !!name() && targets().length > 0 && (edit ? !dup() : will().length > 0);
+      const refresh = () => {
+        const g = $('[data-go]', sheet), w = $('[data-dupnote]', sheet);
+        if (g) { g.disabled = !ok(); g.textContent = label(); }
+        if (w) { w.hidden = !dup(); w.textContent = dup() ? `이 날에 「${name()}」가 이미 있어요` : ''; }
+      };
       const draw = () => {
-        const n = name(), w = will(), tg = targets();
-        const label = !n ? '이름을 골라 주세요' : !tg.length ? '날을 골라 주세요' : !w.length ? '이미 모두 있어요' : `${w.length}일에 추가${rep ? ' · 매주 반복' : ''}`;
-        setSheet(`<h3>할 일 추가 · ${C.weekLabel(mon)}</h3>
+        const tg = targets();
+        setSheet(`<h3>${edit ? `할 일 고치기 · ${md(k0)} (${dow(k0)})` : `할 일 추가 · ${C.weekLabel(mon)}`}</h3>
           <span class="label">이름</span>
-          <div class="opts" data-chips>${chips.map((x, i) => `<button data-c="${i}" class="${!custom && pick === i ? 'on' : ''}">${esc(x.n)}</button>`).join('')}<button data-custom class="${custom ? 'on' : ''}">직접 입력</button></div>
-          ${custom ? `<input class="nmin" data-typed maxlength="${NAME_MAX}" placeholder="예: SKCT 1회" value="${esc(typed)}">` : ''}
+          <input class="nmin" data-typed maxlength="${NAME_MAX}" placeholder="예: SKCT 1회" value="${esc(typed)}">
           <span class="label" style="margin-top:12px">넣을 날</span>
           <div class="opts f3" data-mode>${[['one', '이 날만'], ['all', '일주일 전부'], ['pick', '요일 고르기']].map(([k, l]) => `<button data-mode="${k}" class="${mode === k ? 'on' : ''}">${l}</button>`).join('')}</div>
           <div class="opts f3" data-quick><button data-quick="work" class="${quick === 'work' ? 'on' : ''}">근무일만</button><button data-quick="off" class="${quick === 'off' ? 'on' : ''}">휴무일만</button></div>
           <div class="days7" data-days>${days.map(d => { const k = K(d), r = S.roster[k], on = tg.includes(d); return `<button data-d="${d}" class="${on ? 'on' : ''}"${d < t ? ' disabled' : ''}>${dow(k)}<small>${r ? (r.s === 'off' ? '휴무' : r.s) : ''}</small></button>`; }).join('')}</div>
           <button class="rowopt" data-rep><span>매주 반복 ↻<small>다음 주에도 ${mode === 'all' ? '매일' : quick === 'work' ? '근무일마다' : quick === 'off' ? '휴무일마다' : '같은 요일에'} 들어가요</small></span><span class="tgl${rep ? '' : ' no'}"></span></button>
-          <button class="go" data-go${n && w.length ? '' : ' disabled'}>${label}</button><button class="close" data-x>닫기</button>`);
+          <p class="dupnote" data-dupnote hidden></p>
+          <button class="go" data-go>${label()}</button><button class="close" data-x>닫기</button>`);
         const inp = $('[data-typed]', sheet);
-        if (inp) inp.oninput = () => { typed = inp.value; const g = $('[data-go]', sheet), ww = will(), nn = name(); g.disabled = !(nn && ww.length); g.textContent = !nn ? '이름을 골라 주세요' : !ww.length ? (targets().length ? '이미 모두 있어요' : '날을 골라 주세요') : `${ww.length}일에 추가${rep ? ' · 매주 반복' : ''}`; };
+        if (inp) inp.oninput = () => { typed = inp.value; refresh(); };
+        refresh();
       };
       openSheet('', e => {
         const b = e.target.closest('button'); if (!b || b.disabled) return;
-        if (b.dataset.c != null) { custom = false; pick = +b.dataset.c; draw(); }
-        else if (b.hasAttribute('data-custom')) { custom = true; pick = -1; draw(); const i = $('[data-typed]', sheet); if (i) i.focus(); }
-        else if (b.dataset.mode) { mode = b.dataset.mode; quick = null; if (mode === 'pick') picked = new Set(future.filter(d => d === d0)); draw(); }
+        if (b.dataset.mode) { mode = b.dataset.mode; quick = null; if (mode === 'pick') picked = new Set(future.filter(d => d === d0)); draw(); }
         else if (b.dataset.quick) { quick = quick === b.dataset.quick ? null : b.dataset.quick; mode = 'pick'; picked = new Set(quick ? future.filter(d => (quick === 'work') === isWork(d)) : []); draw(); }
         else if (b.dataset.d != null) { const d = +b.dataset.d; if (mode !== 'pick') { picked = new Set(targets()); mode = 'pick'; } quick = null; picked.has(d) ? picked.delete(d) : picked.add(d); draw(); }
         else if (b.hasAttribute('data-rep')) { rep = !rep; draw(); }
         else if (b.hasAttribute('data-go')) {
-          const n = name(), m = mins(), w = will(); if (!n || !w.length) return;
-          if (rep) {
-            // 반복은 규칙으로 저장(날짜마다 복사하지 않음). 근무일만·휴무일만은 근무표 기준 규칙, 오늘 이전에는 넣지 않음
-            const tg = targets(), kind = quick || (mode === 'all' ? 'daily' : 'wd');
-            // 시작일: 매일·근무표 기준 규칙은 오늘(미래 주면 그 주 월요일)부터, 요일 규칙은 고른 첫날부터
+          if (!ok()) return;
+          const n = name(), tg = targets(), kind = quick || (mode === 'all' ? 'daily' : 'wd');
+          const wd = kind === 'wd' ? [...new Set(tg.map(C.weekday))].sort() : [];
+          if (edit) applyEdit(k0, edit, { n, tg, kind, wd, rep });
+          else if (rep) {
+            // 반복은 규칙으로 저장(날짜마다 복사하지 않음). 근무일만·휴무일만은 근무표 기준 규칙. 시간 없음
             const from = K(kind === 'wd' ? Math.max(t, Math.min(...tg)) : Math.max(t, mon));
-            PL.rules.push({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), n, m, kind, wd: kind === 'wd' ? [...new Set(tg.map(C.weekday))].sort() : [], from, until: null });
-          } else w.forEach(d => addItem(K(d), { n, m }, true));
-          closeSheet(); done(); if (typeof renderToday === 'function') renderToday(false);
+            PL.rules.push({ id: newRid(), n, kind, wd, from, until: null });
+          } else will().forEach(d => addItem(K(d), { n }, true));
+          closeSheet(); done(); renderToday(false);
         } else if (b.hasAttribute('data-x')) closeSheet();
       });
       draw();
     }
-    /* 반복 항목 지우기: 이 날만 / 앞으로 전부 */
-    function delSheet(k, n) {
-      const rid = (PL.days[k] && PL.days[k].r[n]) || (C.dayItems(ST(), k).find(x => x.n === n) || {}).rule;
-      if (!rid) { removeItem(k, n); done(); return; }
-      openSheet(`<h3>「${esc(n)}」 빼기</h3><span class="label">매주 반복하는 할 일이에요</span>
-        <div class="btns"><button data-one>이 날만<small>${md(k)}</small></button><button data-all>앞으로 전부<small>${md(k)}부터</small></button></div><button class="close" data-x>취소</button>`, e => {
-        const b = e.target.closest('button'); if (!b) return;
-        if (b.hasAttribute('data-one')) { removeItem(k, n); const m = pmark(k); if (!m.skip.includes(rid)) m.skip.push(rid); closeSheet(); done(); }
-        else if (b.hasAttribute('data-all')) {
-          const ru = PL.rules.find(r => r.id === rid);
-          if (ru) { ru.until = K(C.keyToDay(k) - 1); if (ru.until < ru.from) PL.rules.splice(PL.rules.indexOf(ru), 1); }
-          // 그날 이후 저장된 날짜에서 그 반복 항목을 지운다(지난 날은 그대로)
-          Object.keys(S.days).forEach(dk => { if (dk >= k && PL.days[dk] && PL.days[dk].r[n] === rid) { const t = S.days[dk], i = t.tasks.findIndex(x => x.n === n); if (i >= 0) t.tasks.splice(i, 1); unmark(dk, n); } });
-          closeSheet(); done();
-        } else if (b.hasAttribute('data-x')) closeSheet();
-      });
+    const newRid = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    /* 고치기 적용(v13 정책). 기준일 = 고친 그 날(k0). k0보다 앞선 날의 항목·체크는 건드리지 않는다
+       · 1회 항목(기본 목록 공부·헬스 포함): k0에서 이름만 바꿈(시간·체크 그대로). 다른 날을 고르면 그날에 1회 항목으로 더함
+       · 반복 항목 + 매주 반복 켜 둠: 이름·요일 변경을 k0부터 앞으로 전부 — 옛 규칙은 k0 전날까지, 새 규칙은 k0부터
+       · 반복 항목 + 매주 반복 끔: k0 것은 1회 항목으로 남기고(「매주」 꼬리표 사라짐) 다음 날부터 삭제
+       · 1회 항목 + 매주 반복 켬: k0부터 새 규칙, k0 항목은 그 규칙의 항목이 됨 */
+    function applyEdit(k0, old, nw) {
+      const d0 = C.keyToDay(k0), t = dayEdit(k0), it = t.tasks.find(x => x.n === old.n); if (!it) return;
+      const m0 = pmark(k0), rid = m0.r[old.n] || old.rule || null, ru = rid ? PL.rules.find(r => r.id === rid) : null;
+      const weekly = m0.w.includes(old.n) || (PL.wk || []).includes(old.n) || !!rid;
+      // k0 항목 이름 바꾸기(시간·체크·자리 그대로)
+      it.n = nw.n; unmark(k0, old.n);
+      let newId = null;
+      if (ru) {
+        // 옛 규칙은 k0 전날까지. k0 다음 날부터 저장된 그 규칙 항목은 지움(지난 날은 그대로)
+        ru.until = K(d0 - 1); if (ru.until < ru.from) PL.rules.splice(PL.rules.indexOf(ru), 1);
+        Object.keys(S.days).forEach(dk => {
+          if (dk <= k0 || !PL.days[dk] || PL.days[dk].r[old.n] !== rid) return;
+          const tk = S.days[dk].tasks, i = tk.findIndex(x => x.n === old.n);
+          if (i >= 0) tk.splice(i, 1);
+          unmark(dk, old.n);
+        });
+      }
+      if (nw.rep) {
+        newId = newRid();
+        PL.rules.push({ id: newId, n: nw.n, m: ru ? ru.m : undefined, kind: nw.kind, wd: nw.wd, from: k0, until: null });
+        if (ru) Object.keys(PL.days).forEach(dk => { const sk = PL.days[dk].skip; if (dk > k0 && sk.includes(rid)) sk.splice(sk.indexOf(rid), 1, newId); }); // 이 날만 지운 날은 그대로 건너뜀
+        if (C.ruleOn(S, PL.rules[PL.rules.length - 1], d0)) m0.r[nw.n] = newId;      // k0도 새 규칙에 해당하면 그 규칙 항목
+        else { const i = t.tasks.indexOf(it); if (i >= 0) t.tasks.splice(i, 1); }  // 새 요일에 k0가 없으면 k0에서 빠짐
+      } else {
+        if (weekly && !m0.w.includes(nw.n)) m0.w.push(nw.n);                       // 1회 항목으로 주간에 남김
+        if (!ru) nw.tg.forEach(d => { if (d !== d0) addItem(K(d), { n: nw.n, m: it.m }, weekly); }); // 반복을 끈 경우는 그날 것만 남김(정책 7)
+        if (!nw.tg.includes(d0)) removeItem(k0, nw.n);                              // 고른 날에서 k0를 뺐으면 k0에서 빠짐
+      }
     }
     function memoSheet() {
       const mk = K(wk0);
@@ -895,7 +942,8 @@
       else if (a === 'sel') { sel = +b.dataset.d; render(); }
       else if (a === 'chk') { const k = b.dataset.k, n = b.dataset.n, it = dayEdit(k).tasks.find(x => x.n === n); if (it) it.done = !it.done; done(); }
       else if (a === 'add') addSheet(b.dataset.k);
-      else if (a === 'wdel') delSheet(b.dataset.k, b.dataset.n);
+      else if (a === 'edit') { const k = b.dataset.k, n = b.dataset.n, x = C.weekItems(ST(), k).find(y => y.n === n); if (x) addSheet(k, { n, rule: x.rule || null }); }
+      else if (a === 'wdel') { removeItem(b.dataset.k, b.dataset.n); done(); renderToday(false); } // 반복 항목도 그날 것만(v13)
       else if (a === 'memo') memoSheet();
       else if (a === 'carry') carry();
     });
