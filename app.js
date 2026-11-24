@@ -491,6 +491,10 @@
 
   const REL = ['오늘', '내일', '모레'];
   function dheadHTML(P) {
+    // QA-009 B(v15): 오늘 페이지가 다른 날짜 근무를 계산하면(그날 출발 뒤, 다음 출발 24시간 전 휴무 날) 어느 날짜 근무 준비인지 한 줄로. 숫자·계산·저장은 그대로
+    const v = P.vm, T = P.isToday && v.type === 'work' && v.target.key !== P.date ? v.target : null;
+    if (T) { const g = T.day - P.d, sd = T.key.slice(5).split('-').map(Number).join('/');
+      return `<div class="month dhead a1"><h2 class="num" data-dtitle>오늘<span class="rel"> · ${g === 1 || g === 2 ? `${REL[g]}(${sd})` : sd} 근무 준비</span></h2></div>`; }
     return `<div class="month dhead a1"><h2 class="num" data-dtitle>${md(P.date)} (${dow(P.date)})${REL[P.i] ? `<span class="rel"> · ${REL[P.i]}</span>` : ''}</h2>${P.isToday ? '' : '<button class="golink" data-act="gotoday">오늘로</button>'}</div>`;
   }
 
@@ -658,7 +662,8 @@
     timeSheet({
       title: `집 도착 · ${md(k)} ${r.s}조 퇴근`, val: mod(h0.home, 1440), presets: [0, 30, 60, 90, 120, 150, 180, 240].map(m => mod(h0.base + m, 1440)),
       step: 10, wrap: true, show: m => fmt(m),
-      onChange: x => { (H.days[k] || (H.days[k] = {})).fix = toFix(x); done(); },
+      // QA-010(v15): 기본 집 도착 + 퇴근 후 합계와 같은 시각을 고르면 「지우기」와 같게(고친 값 없음)
+      onChange: x => { const f = toFix(x); if (d * 1440 + f === auto) { if (H.days[k]) delete H.days[k].fix; } else (H.days[k] || (H.days[k] = {})).fix = f; done(); },
       reset: { show: () => hm().fixed, label: `직접 고친 시각 지우기 · 기본 ${fmt(auto)}`, on: () => { if (H.days[k]) delete H.days[k].fix; done(); } },
     });
   }
