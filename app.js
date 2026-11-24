@@ -88,10 +88,11 @@
       return o;
     } catch (e) { backup(raw); return d; }
   }
-  let saveFailed = false;
+  let saveFailed = false, H = null, hStored = false; // H: v14 집 도착 저장(아래 loadHome)
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(S)); saveFailed = false; }
     catch (e) { saveFailed = true; }
+    if (H) { syncHome(); saveHome(); } // v14: bh 사본·직접 고친 집 도착(시작 직후 v10 이전 저장 때는 아직 없음)
   }
   const S = load();
   if (migrated) save(); // 이전·정리 결과를 바로 저장(원본은 백업 키에 있음)
@@ -124,7 +125,57 @@
   const PL = loadPlan();
   function savePlan() { try { localStorage.setItem(PKEY, JSON.stringify(PL)); } catch (e) { saveFailed = true; } }
   if (C.prunePlan(PL, C.nowAbs(new Date()))) savePlan();
-  const ST = () => Object.assign({}, S, { plan: PL }); // 계산에 넘기는 상태(본 저장값 + 플래너)
+  /* v14 집 도착 저장(별도 키 HKEY, v13 이하가 읽지 않음): days[근무 날짜] = { fix: 직접 고친 집 도착(그 날짜 00:00부터 분), after: 「집 오기 전」 이름 }.
+     after는 v11 왕복 대비 사본 — v11은 bh를 버리므로, 돌아왔을 때 그날 목록에 bh가 하나도 없으면 이 이름으로 bh를 되살린다(spec 7-2) */
+  const HKEY = KEY + '-home';
+  function loadHome() {
+    const d = { v: 1, days: {} };
+    let raw = null;
+    try { raw = localStorage.getItem(HKEY); } catch (e) { return d; }
+    if (raw == null) return d;
+    hStored = true;
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object' || s.v !== 1) { backup(raw); return d; }
+    if (s.days && typeof s.days === 'object') Object.keys(s.days).forEach(k => {
+      const v = s.days[k]; if (!isDayKey(k) || !v || typeof v !== 'object') return;
+      const o = {};
+      if (Number.isFinite(v.fix)) o.fix = v.fix;
+      if (isStrArr(v.after) && v.after.length) o.after = v.after;
+      if (Object.keys(o).length) d.days[k] = o;
+    });
+    return d;
+  }
+  H = loadHome();
+  // 퇴근 후 할 일·고친 시각을 한 번도 쓰지 않은 사람에게는 새 키를 만들지 않는다
+  function saveHome() { if (!hStored && !Object.keys(H.days).length) return; try { localStorage.setItem(HKEY, JSON.stringify(H)); hStored = true; } catch (e) { saveFailed = true; } }
+  /* 본 저장값의 bh → H.after 사본 맞추기(저장할 때마다). 목록이 없는 날의 after는 지운다 */
+  function syncHome() {
+    Object.keys(S.days).forEach(k => {
+      const names = S.days[k].tasks.filter(x => x.bh).map(x => x.n);
+      if (names.length) (H.days[k] || (H.days[k] = {})).after = names;
+      else if (H.days[k]) delete H.days[k].after;
+    });
+    Object.keys(H.days).forEach(k => { if (!S.days[k]) delete H.days[k].after; if (!Object.keys(H.days[k]).length) delete H.days[k]; });
+  }
+  /* v11 왕복 복원: 그날 목록에 bh가 하나도 없는데 after 사본이 있으면 같은 이름의 마지막 항목을 bh로(옮긴 항목은 목록 뒤에 붙어 있음) */
+  function restoreAfter() {
+    let n = 0;
+    Object.keys(H.days).forEach(k => {
+      const t = S.days[k], a = H.days[k].after; if (!t || !a || t.tasks.some(x => x.bh)) return;
+      a.forEach(nm => { for (let i = t.tasks.length - 1; i >= 0; i--) if (t.tasks[i].n === nm && !t.tasks[i].bh) { t.tasks[i].bh = true; n++; break; } });
+    });
+    return n;
+  }
+  function pruneHome(now) {
+    const min = C.dayToKey(Math.floor(now / 1440) - 13); let n = 0;
+    Object.keys(H.days).forEach(k => { if (k < min) { delete H.days[k]; n++; } });
+    return n;
+  }
+  if (restoreAfter() | pruneHome(C.nowAbs(new Date()))) { save(); }
+  const ST = () => Object.assign({}, S, { plan: PL, home: H }); // 계산에 넘기는 상태(본 저장값 + 플래너 + 집 도착)
+  /* 같은 날 같은 이름이 출발 전·집 오기 전에 하나씩 있을 수 있다(v14) — 이름으로 찾을 때는 출발 전 것을 먼저 */
+  const findN = (tasks, n, bh) => bh == null ? tasks.find(x => x.n === n && !x.bh) || tasks.find(x => x.n === n) : tasks.find(x => x.n === n && !!x.bh === !!bh);
   const pmark = k => PL.days[k] || (PL.days[k] = { w: [], r: {}, cf: {}, skip: [] });
   function unmark(k, n) { const m = PL.days[k]; if (!m) return; m.w = m.w.filter(x => x !== n); delete m.r[n]; }
   const hasName = (k, n) => C.dayItems(ST(), k).some(x => x.n === n);
@@ -141,12 +192,21 @@
     return t;
   }
   /* 그날에서 항목 빼기(어느 화면이든 같은 규칙): 반복 항목이면 그날만 건너뛰게 skip에 넣고, 시간 있는 항목은 오늘 탭 「다시 넣기」 칩에 남긴다 */
-  function removeItem(k, n) {
-    const t = dayEdit(k), i = t.tasks.findIndex(x => x.n === n); if (i < 0) return null;
-    const it = t.tasks.splice(i, 1)[0], rid = PL.days[k] && PL.days[k].r[n];
-    if (rid) { const m = pmark(k); if (!m.skip.includes(rid)) m.skip.push(rid); }
-    if (Number.isFinite(it.m)) t.removed.push({ n: it.n, m: it.m });
-    unmark(k, n);
+  function removeItem(k, n, bh) {
+    const it = takeItem(k, n, bh); if (!it) return null;
+    if (Number.isFinite(it.m)) dayEdit(k).removed.push({ n: it.n, m: it.m });
+    return it;
+  }
+  /* 그날 목록에서 꺼내기(빼기·다른 날로 옮기기 공통, v14). bh를 주면 그 칸(출발 전/집 오기 전)의 것, 안 주면 출발 전 것을 먼저.
+     같은 이름이 하나도 안 남을 때만 반복 건너뛰기·주간 표시를 정리한다 */
+  function takeItem(k, n, bh) {
+    const t = dayEdit(k), it = findN(t.tasks, n, bh); if (!it) return null;
+    t.tasks.splice(t.tasks.indexOf(it), 1);
+    if (!t.tasks.some(x => x.n === n)) {
+      const rid = PL.days[k] && PL.days[k].r[n];
+      if (rid) { const m = pmark(k); if (!m.skip.includes(rid)) m.skip.push(rid); }
+      unmark(k, n);
+    }
     return it;
   }
   /* 같은 날 같은 이름은 어떤 경로로든 넣지 않는다(사용자 결정 11/24) — 넣었으면 true */
@@ -183,18 +243,19 @@
   const sheetOpen = () => sheet.classList.contains('show');
 
   /* 시간 고르기 시트: 프리셋 한 번 누르면 바로 적용·닫힘, ±는 미세 조정 */
-  function timeSheet({ title, val, presets, step = 5, min = 5, max = 720, show = dur, wrap = false, onChange }) {
+  function timeSheet({ title, val, presets, step = 5, min = 5, max = 720, show = dur, wrap = false, onChange, reset = null }) { // reset(v14): { show(), label, on() } — 보일 때만 「완료」 위에 버튼
     let v = val;
     const draw = () => setSheet(`<h3>${esc(title)}</h3><div class="tsv num">${show(v)}</div>
       <div class="label">자주 쓰는 시간 · 누르면 바로 적용</div>
       <div class="opts tsp">${presets.map((m, i) => `<button data-i="${i}" class="num${m === v ? ' on' : ''}">${show(m)}</button>`).join('')}</div>
       <div class="fine"><button data-d="-1">− ${step}분</button><span>${step}분씩 조정</span><button data-d="1">+ ${step}분</button></div>
-      <button class="close" data-x>완료</button>`);
+      ${reset && reset.show() ? `<button class="close" data-reset>${esc(reset.label)}</button>` : ''}<button class="close" data-x>완료</button>`);
     const set = nv => { v = wrap ? mod(nv, 1440) : clamp(nv, min, max); onChange(v); draw(); };
     openSheet('', e => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.i != null) { set(presets[+b.dataset.i]); setTimeout(closeSheet, 180); }
       else if (b.dataset.d) set(v + step * +b.dataset.d);
+      else if (b.hasAttribute('data-reset')) { reset.on(); closeSheet(); }
       else if (b.hasAttribute('data-x')) closeSheet();
     });
     draw();
@@ -253,6 +314,87 @@
     });
   }
 
+  /* 오늘 시간표 끌기(v14): 줄마다 칸(data-z)이 있다. 끄는 카드 가운데가
+     맨 위 집 도착 줄(data-za=top) 가운데보다 위 → top, 맨 아래 퇴근 후 칸 바로 앞 줄 가운데보다 아래 → post, 그 사이 → pre.
+     같은 칸 안에서는 v13처럼 비켜 주기, 다른 칸으로 갈 때는 놓일 자리에 줄 하나(.dropline)만 보인다.
+     onDrop(끈 줄, 칸, 그 칸에서 몇 번째) — 같은 칸 같은 자리면 부르지 않음 */
+  function ttSortable(list, onDrop) {
+    $$('.tk .grip', list).forEach(g => {
+      g.onclick = e => e.stopPropagation();
+      g.onpointerdown = e => {
+        if (e.button > 0) return;
+        e.preventDefault();
+        const items = $$('.tk', list), it = g.closest('.tk'), z0 = it.dataset.z;
+        const rects = new Map(items.map(x => [x, x.getBoundingClientRect()])), y0 = e.clientY, r0 = rects.get(it), h = r0.height;
+        const mid = r => r.top + r.height / 2, lr = list.getBoundingClientRect();
+        const topA = $('[data-za="top"]', list), postA = $('[data-za="post"]', list);
+        const B1 = topA ? mid(topA.getBoundingClientRect()) : -Infinity;
+        const postFirst = $('.tk[data-z="post"]', list), before = postA ? (postFirst || postA).previousElementSibling : null;
+        const B2 = before ? mid((rects.get(before) || before.getBoundingClientRect())) : Infinity;
+        const anchorTop = z => (z === 'top' ? topA : postA).getBoundingClientRect().top;
+        const zoneItems = z => items.filter(x => x.dataset.z === z);
+        const line = document.createElement('div'); line.className = 'dropline'; line.hidden = true; list.appendChild(line);
+        let z = z0, idx = zoneItems(z0).indexOf(it);
+        const idx0 = idx;
+        try { g.setPointerCapture(e.pointerId); } catch (_) {}
+        dragging = true; it.classList.add('dragging'); list.classList.add('sorting');
+        const trk = list.closest('.dtrack'); if (trk) trk.classList.add('lock'); // 손잡이에서 시작한 드래그는 넘기기 금지(v11)
+        g.onpointermove = ev => {
+          const dy = ev.clientY - y0, c = mid(r0) + dy;
+          mv(it, `translateY(${dy}px) scale(1.02)`);
+          z = topA && c < B1 ? 'top' : postA && c > B2 ? 'post' : 'pre';
+          const zi = zoneItems(z), others = zi.filter(x => x !== it);
+          idx = others.filter(x => mid(rects.get(x)) < c).length;
+          items.forEach(x => { if (x !== it) mv(x, ''); });
+          if (z === z0) {
+            line.hidden = true;
+            const f = zi.indexOf(it);
+            zi.forEach((x, i) => {
+              if (x === it) return;
+              let s = 0;
+              if (f < idx && i > f && i <= idx) s = -h;
+              if (f > idx && i < f && i >= idx) s = h;
+              mv(x, s ? `translateY(${s}px)` : '');
+            });
+          } else {
+            const y = others.length ? (idx < others.length ? rects.get(others[idx]).top : rects.get(others[others.length - 1]).bottom) : anchorTop(z);
+            line.hidden = false; line.style.top = (y - lr.top - 1) + 'px';
+          }
+        };
+        const end = () => {
+          g.onpointermove = g.onpointerup = g.onpointercancel = null;
+          dragging = false;
+          items.forEach(x => mv(x, '')); line.remove();
+          it.classList.remove('dragging'); list.classList.remove('sorting'); if (trk) trk.classList.remove('lock');
+          if (z !== z0 || idx !== idx0) onDrop(it, z, idx);
+        };
+        g.onpointerup = end; g.onpointercancel = end;
+      };
+    });
+  }
+  /* 놓기(v14): 칸이 목록과 bh를 정한다 — pre = 이 페이지 날짜 목록·출발 전, post = 이 페이지 근무 목록·집 오기 전,
+     top = 맨 위 집 도착 근무(전날 C조 등) 목록·집 오기 전. 휴무 페이지의 pre는 bh 구분 없이 목록 전부.
+     옮길 곳에 같은 칸 같은 이름이 있으면 막고 한 줄 안내 */
+  function dropTask(P, el, z, idx) {
+    const v = P.vm, fk = el.dataset.k || P.key, tk = z === 'top' ? v.top && v.top.key : P.key; if (!fk || !tk) return;
+    const toBh = z !== 'pre', all = v.type === 'off' && z === 'pre';
+    const src = dayEdit(fk).tasks, it = src[+el.dataset.i]; if (!it) return;
+    const inZone = x => all || !!x.bh === toBh;
+    if (fk !== tk || !!it.bh !== toBh) {
+      if (dayEdit(tk).tasks.some(x => x !== it && x.n === it.n && !!x.bh === toBh)) {
+        ttNote = { page: P.i, text: `${z === 'pre' ? '출발 전' : '퇴근 후'} 할 일에 「${it.n}」이 이미 있어요` }; renderToday(false); return;
+      }
+    }
+    const moved = fk === tk ? src.splice(src.indexOf(it), 1)[0] : takeItem(fk, it.n, it.bh);
+    if (!moved) return;
+    moved.bh = toBh;
+    const tl = dayEdit(tk).tasks, zi = tl.filter(inZone);
+    if (idx < zi.length) tl.splice(tl.indexOf(zi[idx]), 0, moved);
+    else if (zi.length) tl.splice(tl.indexOf(zi[zi.length - 1]) + 1, 0, moved);
+    else tl.push(moved);
+    save(); savePlan(); renderToday();
+  }
+
   /* ───────── 공통 조각 ───────── */
   const md = k => { const [, m, d] = k.split('-').map(Number); return `${m}월 ${d}일`; };
   const dow = k => { const [y, m, d] = k.split('-').map(Number); return W[new Date(y, m - 1, d).getDay()]; };
@@ -275,17 +417,30 @@
     const span = parts.reduce((a, p) => a + Math.max(0, p.m), 0) || 1;
     return parts.filter(p => p.m > 0).map(p => `<div class="sg ${p.cls}" style="--w:${(p.m / span * 100).toFixed(3)}%">${p.m / span < 0.07 ? '' : esc(p.txt)}</div>`).join('');
   }
-  const ev = (cls, tm, tx, extra = '') => `<div class="ev ${cls}"><span class="dot"></span><span class="tm num">${tm}</span><span class="tx">${tx}</span>${extra}</div>`;
-  function tasksHTML(tasks, from, freshIdx) {
+  const ev = (cls, tm, tx, extra = '', attr = '') => `<div class="ev ${cls}"${attr}><span class="dot"></span><span class="tm num">${tm}</span><span class="tx">${tx}</span>${extra}</div>`;
+  /* 시간표 할 일 줄. z = 칸(pre 출발 전 · post 그날 근무 퇴근 후 · top 맨 위 집 도착 줄의 퇴근 후), lk = 다른 날 목록이면 그 날짜(top), pick = 이 칸에 들어갈 항목.
+     data-i는 그 날짜 목록에서의 번호(v13과 같음) */
+  function tasksHTML(tasks, from, freshIdx, z = 'pre', lk = null, pick = null) {
     let t = from;
     return tasks.map((k, i) => {
+      if (pick && !pick(k)) return '';
+      const at = ` data-i="${i}" data-z="${z}"${lk ? ` data-k="${lk}"` : ''}`;
       if (!Number.isFinite(k.m)) // v13: 시간 없는 항목은 「시간 정하기」 점선 줄 — 정하기 전에는 0분(계산 그대로), 누르면 시간 시트
-        return `<div class="tk unset${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b></div><div class="ctl"><button class="tpill set hit" data-act="dur" data-i="${i}">시간 정하기</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
+        return `<div class="tk unset${i === freshIdx ? ' new' : ''}"${at}><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b></div><div class="ctl"><button class="tpill set hit" data-act="dur" data-i="${i}">시간 정하기</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       const m = k.m;
-      const h = `<div class="tk${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
+      const h = `<div class="tk${i === freshIdx ? ' new' : ''}"${at}><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       t += m; return h;
     }).join('');
   }
+  /* v14 집 도착 줄(spec 7-2): 시각 버튼을 누르면 그 근무의 집 도착을 직접 고친다. za = 끌어 놓기 기준(top 맨 위 · post 맨 아래) */
+  function homeRowHTML(Hm, sub, za, cls = '') {
+    const note = Hm.fixed ? ' · 직접 고친 시각' : Hm.sum > 0 ? ` · 퇴근 후 할 일 ${dur(Hm.sum)}` : '';
+    return ev(cls, fmt(Hm.home), `집 도착<small>${sub}${note}</small>`, `<button class="tpill num hit" data-act="home" data-k="${Hm.key}">${fmt(Hm.home)}</button>`, ` data-za="${za}"`);
+  }
+  /* 퇴근 후 칸: 그 근무 날짜 목록의 bh 할 일. 시각은 기본 집 도착부터 차례로(합계만큼 집 도착이 늦어짐) */
+  const afterHTML = (Hm, z, list) => tasksHTML(list || C.dayItems(ST(), Hm.key), Hm.base, -1, z, z === 'top' ? Hm.key : null, x => x.bh);
+  let ttNote = null; // 끌어 놓기를 막았을 때 그 페이지 시간표 아래 한 줄(다음 그리기 때 사라짐)
+  const noteHTML = P => (ttNote && ttNote.page === P.i ? `<p class="dupnote" data-ttnote>${esc(ttNote.text)}</p>` : '');
   function spareHTML(key, list) {
     const d = key ? S.days[key] : null, rm = d ? d.removed : [], names = new Set(rm.map(x => x.n)), have = new Set((list || []).map(x => x.n));
     // 이미 그날 목록에 있는 이름은 칩을 보이지 않는다(같은 날 같은 이름 금지)
@@ -347,7 +502,7 @@
       const el = pageEls[P.i], v = P.vm;
       let h = dheadHTML(P);
       if (v.type === 'none') {
-        if (P.isToday) h += `<div class="head a1"><div><div class="label num">${v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `지금 ${fmt(v.now)}`}</div><div class="shift">다음 근무가 없어요</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>
+        if (P.isToday) h += `<div class="head a1"><div><div class="label num">${v.prog ? `${v.prog.after ? '퇴근 후' : '근무 중'} · 집 도착 ${fmt(v.prog.home)}` : `지금 ${fmt(v.now)}`}</div><div class="shift">다음 근무가 없어요</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>
         <div class="glass hero a2 empty"><b>근무표에 다음 근무가 없어요</b><span class="label">근무표 탭에서 근무조를 채우면 여기서 잘 수 있는 시간을 계산해요.</span></div>`;
         else h += `<div class="glass hero a2 empty"><b>이 날은 근무표에 없어요</b><span class="label">근무표는 2026년 11월 ~ 2027년 6월이에요.</span></div>`;
         el.innerHTML = h; return;
@@ -357,9 +512,9 @@
       const big = $('[data-sleep]', el);
       if (big) { if (P.isToday) countSleep(big, v.sleep, animate); else big.innerHTML = sleepHTML(v.sleep); big.classList.toggle('short', v.sleep < 0); }
       const tt = $('.tt', el);
-      if (tt) sortable(tt, '.tk', (f, t) => { moveItem(dayEdit(P.key).tasks, f, t); save(); savePlan(); renderToday(); }); // v13: 「시간 정하기」 줄도 함께 끌기
+      if (tt) ttSortable(tt, (it, z, idx) => dropTask(P, it, z, idx)); // v13: 「시간 정하기」 줄도 함께 끌기 · v14: 칸(출발 전·퇴근 후) 사이로 옮기기
     });
-    fresh = { page: -1, idx: -1 };
+    fresh = { page: -1, idx: -1 }; ttNote = null;
     applyPage(pendingPage != null ? curPage : pageFromScroll());
   }
 
@@ -401,7 +556,7 @@
       ? `평소보다 ${dur(C.OT_MIN)} 일찍 · ${fmt(v.start)}부터 근무 · 출근 버스 없음`
       : `평소보다 ${dur(C.OT_MIN)} 늦게 · ${fmt(v.end)}까지 근무 · 퇴근 버스 없음`}</small></div><span class="more">근무표 ›</span></button>`;
     const lab = v.future ? (v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : '다음 근무')
-      : v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
+      : v.prog ? `${v.prog.after ? '퇴근 후' : '근무 중'} · 집 도착 ${fmt(v.prog.home)}` : v.prevC ? `${fmt(v.home)} 집 도착 · 다음 근무` : `지금 ${fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '다음 근무'}`;
     h += `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${dayWord} ${T.s}조 · ${fmt(v.start)} 출근${otTxt ? `<span class="otbadge">${otTxt}</span>` : ''}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     if (today && v.todayOff) h += `<div class="evenote a2" style="margin-top:14px"><b>근무일 계산으로 바뀌었어요</b><small>다음 출발까지 24시간이 안 남았어요 · 휴무 화면은 그 전까지</small></div>`;
     const noBed = v.sleep == null; // 미래 페이지, 전날 C조가 아님 → 잠들기 기준 없음(①)
@@ -410,7 +565,7 @@
     const parts = [];
     if (!fromNow && v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
-    tasks.forEach(k => { if (Number.isFinite(k.m)) parts.push({ cls: 't', m: k.m, txt: k.n }); });
+    tasks.forEach(k => { if (!k.bh && Number.isFinite(k.m)) parts.push({ cls: 't', m: k.m, txt: k.n }); }); // v14: 출발 전 할 일만
     h += `<div class="glass hero a2"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
       <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${!noBed && v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
       ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div>`}</div>`;
@@ -421,13 +576,13 @@
       .map(o => `<button data-act="mode" data-k="${o.k}" class="${o.k === v.mode ? 'on' : ''}">${o.label}<small class="num">${fmt(o.dep)} 출발</small></button>`).join('')}</div></div>`;
     // 시간표
     let tt = '';
-    if (v.home != null) tt += ev('', fmt(v.home), `집 도착<small>${v.prevC ? 'C' : v.prog.s}조 퇴근</small>`);
+    if (v.top) tt += afterHTML(v.top, 'top') + homeRowHTML(v.top, `${v.prevC ? 'C' : v.prog.s}조 퇴근`, 'top');
     if (v.prevC) {
       if (v.eat) tt += ev('meal', fmt(v.home), `밥 먹기<small>~${fmt(v.home + v.meal)}까지</small>`, `<button class="tpill num hit" data-act="meal">${dur(v.meal)}</button>`);
     }
     if (!noBed) tt += ev('', fmt(v.bed), `잠들기<small>${v.sleep > 0 ? dur(v.sleep) + ' 자요' : ''}</small>`);
     tt += ev('key', !noBed && v.sleep < 0 ? '—' : fmt(v.wake), '일어나기');
-    tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1);
+    tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1, 'pre', null, x => !x.bh);
     const how = { bus: '시내버스로', taxi: T.ot === 'pre' ? '택시로 회사까지' : '택시로', car: '차로 회사까지' }[v.mode];
     tt += ev('key', fmt(v.dep), `집에서 출발<small>${how}</small>`);
     if (v.mode !== 'car' && T.ot !== 'pre') tt += ev('', fmt(v.bus), '통근버스 타기');
@@ -435,16 +590,16 @@
     else tt += ev('', fmt(v.start), `${T.s}조 근무 시작`);
     if (T.ot === 'post') tt += ev('ot', fmt(v.end), `<b>후OT 끝</b><small>${T.s}조 근무는 ${fmt(v.end - C.OT_MIN)}까지</small>`);
     const nextDay = Math.floor(v.homeAfter / 1440) > T.day;
-    tt += ev('home', fmt(v.homeAfter), `집 도착<small>${T.ot === 'post' ? '택시·차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}</small>`);
+    tt += afterHTML(v.after, 'post', tasks) + homeRowHTML(v.after, `${T.ot === 'post' ? '택시·차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}`, 'post', 'home');
     h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
-      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
+      <div class="glass tt">${tt}</div>${noteHTML(P)}<div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
     return h;
   }
 
   function offHTML(v, P) {
     const T = v.target, tasks = v.tasks, today = P.isToday;
     const lab = v.future ? `${v.home != null ? fmt(v.home) + ' 집 도착 · ' : ''}휴무 ${v.offN}일째`
-      : v.prog ? `근무 중 · 집 도착 ${fmt(v.prog.home)}` : `${v.home != null ? fmt(v.home) + ' 집 도착' : '지금 ' + fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '오늘 근무 끝'}`;
+      : v.prog ? `${v.prog.after ? '퇴근 후' : '근무 중'} · 집 도착 ${fmt(v.prog.home)}` : `${v.home != null ? fmt(v.home) + ' 집 도착' : '지금 ' + fmt(v.now)} · ${v.todayOff ? `휴무 ${v.offN}일째` : '오늘 근무 끝'}`;
     let h = `<div class="head a1"><div><div class="label num">${lab}</div><div class="shift">${!today ? '쉬는 날' : v.todayOff ? '오늘은 쉬는 날' : '오늘 근무 끝 · 쉬는 시간'}</div></div><button class="golink" data-act="roster">근무·OT 바꾸기 ›</button></div>`;
     h += `<div class="sec a2 restsec"><div class="seg glass">${[[0, '계획 세우기', '일어날 시간 정하기'], [1, '아무것도 안 정할래', '알람 없는 날']]
       .map(([k, l, s]) => `<button data-act="rest" data-k="${k}" class="${+v.rest === k ? 'on' : ''}">${l}<small>${s}</small></button>`).join('')}</div></div>`;
@@ -455,13 +610,13 @@
       <div class="pair"><button class="pill wake" data-act="wake"><small>일어나기</small><b class="num" data-wake>${fmt(v.wake)}</b></button><div class="pill"><small>할 일 끝</small><b class="num" data-dep>${fmt(v.end)}</b></div></div>
       ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null && v.bed === v.home ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div>`}</div>`;
     let tt = '';
-    if (v.home != null) tt += ev('', fmt(v.home), '집 도착<small>C조 마지막 근무 끝</small>');
+    if (v.top) tt += afterHTML(v.top, 'top') + homeRowHTML(v.top, 'C조 마지막 근무 끝', 'top');
     if (!noBed) tt += ev('', fmt(v.bed), `잠들기<small>${dur(v.sleep)} 자요</small>`);
     tt += ev('key', fmt(v.wake), '일어나기', `<button class="tpill num hit" data-act="wake">${fmt(v.wake)}</button>`);
     tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1);
     tt += ev('key', fmt(v.end), `할 일 끝<small>그다음은 자유${T ? ` · 다음 근무 ${md(T.key)} ${T.s}조` : ''}</small>`);
     h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
-      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
+      <div class="glass tt">${tt}</div>${noteHTML(P)}<div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
     return h;
   }
 
@@ -493,6 +648,20 @@
     draw();
   }
 
+  const listKey = b => { const tk = b.closest('.tk'); return (tk && tk.dataset.k) || pages[+b.closest('.dpage').dataset.i].key; }; // 맨 위 퇴근 후 칸은 그 근무 날짜 목록
+  /* v14 집 도착 직접 고치기(기존 시간 시트). 그 근무 날짜의 fix(00:00부터 분)에 저장 — 근무 시작 뒤 처음 오는 그 시각.
+     고친 값이 있으면 「직접 고친 시각 지우기」로 다시 기본 + 퇴근 후 할 일 합계 */
+  function homeSheet(k, done) {
+    const d = C.keyToDay(k), r = S.roster[k]; if (!r || !C.SHIFTS[r.s]) return;
+    const hm = () => C.homeOf(ST(), d, r.s, r.ot), lo = C.workStart(d, r.s, r.ot), h0 = hm(), auto = h0.base + h0.sum;
+    const toFix = clock => { let x = Math.floor(lo / 1440) * 1440 + clock; while (x <= lo) x += 1440; return x - d * 1440; };
+    timeSheet({
+      title: `집 도착 · ${md(k)} ${r.s}조 퇴근`, val: mod(h0.home, 1440), presets: [0, 30, 60, 90, 120, 150, 180, 240].map(m => mod(h0.base + m, 1440)),
+      step: 10, wrap: true, show: m => fmt(m),
+      onChange: x => { (H.days[k] || (H.days[k] = {})).fix = toFix(x); done(); },
+      reset: { show: () => hm().fixed, label: `직접 고친 시각 지우기 · 기본 ${fmt(auto)}`, on: () => { if (H.days[k]) delete H.days[k].fix; done(); } },
+    });
+  }
   dtrack.addEventListener('click', e => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const pg = b.closest('.dpage'); if (!pg) return;
@@ -508,8 +677,9 @@
     else if (a === 'eat') { t().eat = b.dataset.k === '1'; done(); }
     else if (a === 'rest') { t().rest = b.dataset.k === '1'; done(); }
     else if (a === 'meal') timeSheet({ title: '자기 전 밥', val: v.meal, presets: PRESET_T, max: 240, onChange: x => { t().meal = x; done(); } });
-    else if (a === 'dur') { const k = v.tasks[i], unset = !Number.isFinite(k.m); timeSheet({ title: unset ? `${k.n} · 얼마나 걸려요?` : k.n + ' 시간', val: unset ? 30 : k.m, presets: PRESET_T, onChange: x => { t().tasks[i].m = x; done(); } }); }
-    else if (a === 'del') { const it = t().tasks[i]; if (it) removeItem(P.key, it.n); done(); }
+    else if (a === 'dur') { const lk = listKey(b), k = C.dayItems(ST(), lk)[i], unset = !Number.isFinite(k.m); timeSheet({ title: unset ? `${k.n} · 얼마나 걸려요?` : k.n + ' 시간', val: unset ? 30 : k.m, presets: PRESET_T, onChange: x => { dayEdit(lk).tasks[i].m = x; done(); } }); }
+    else if (a === 'del') { const lk = listKey(b), it = dayEdit(lk).tasks[i]; if (it) removeItem(lk, it.n, it.bh); done(); }
+    else if (a === 'home') homeSheet(b.dataset.k, done);
     else if (a === 'back') { const d = t(), it = d.removed[i]; if (it && addItem(P.key, it)) { d.removed.splice(i, 1); fresh = { page: P.i, idx: d.tasks.length - 1 }; } done(); }
     else if (a === 'tpl') { const k = S.tpl[i]; if (addItem(P.key, { n: k.n, m: k.m })) fresh = { page: P.i, idx: S.days[P.key].tasks.length - 1 }; done(); }
     else if (a === 'add') addTaskSheet(P);
@@ -890,7 +1060,7 @@
        · 반복 항목 + 매주 반복 끔: k0 것은 1회 항목으로 남기고(「매주」 꼬리표 사라짐) 다음 날부터 삭제
        · 1회 항목 + 매주 반복 켬: k0부터 새 규칙, k0 항목은 그 규칙의 항목이 됨 */
     function applyEdit(k0, old, nw) {
-      const d0 = C.keyToDay(k0), t = dayEdit(k0), it = t.tasks.find(x => x.n === old.n); if (!it) return;
+      const d0 = C.keyToDay(k0), t = dayEdit(k0), it = findN(t.tasks, old.n); if (!it) return;
       const m0 = pmark(k0), rid = m0.r[old.n] || old.rule || null, ru = rid ? PL.rules.find(r => r.id === rid) : null;
       const weekly = m0.w.includes(old.n) || (PL.wk || []).includes(old.n) || !!rid;
       // k0 항목 이름 바꾸기(시간·체크·자리 그대로)
@@ -940,7 +1110,7 @@
       else if (a === 'next') { wk0 = Math.min(hi, wk0 + 7); sel = null; render(); }
       else if (a === 'view') { PL.ui.week = b.dataset.k; savePlan(); render(); }
       else if (a === 'sel') { sel = +b.dataset.d; render(); }
-      else if (a === 'chk') { const k = b.dataset.k, n = b.dataset.n, it = dayEdit(k).tasks.find(x => x.n === n); if (it) it.done = !it.done; done(); }
+      else if (a === 'chk') { const k = b.dataset.k, n = b.dataset.n, it = findN(dayEdit(k).tasks, n); if (it) it.done = !it.done; done(); }
       else if (a === 'add') addSheet(b.dataset.k);
       else if (a === 'edit') { const k = b.dataset.k, n = b.dataset.n, x = C.weekItems(ST(), k).find(y => y.n === n); if (x) addSheet(k, { n, rule: x.rule || null }); }
       else if (a === 'wdel') { removeItem(b.dataset.k, b.dataset.n); done(); renderToday(false); } // 반복 항목도 그날 것만(v13)
@@ -979,7 +1149,7 @@
     const d = Math.floor(nowAbs() / 1440);
     if (app.dataset.tab === 'today') renderToday(true);
     else if (app.dataset.tab === 'week' && d !== lastDay && !sheetOpen()) Week.render(); // 주간은 날짜가 바뀔 때만 다시 그림(누르는 중에 화면이 바뀌지 않게)
-    if (d !== lastDay) { lastDay = d; if (C.pruneDays(S, nowAbs())) save(); if (C.prunePlan(PL, nowAbs())) savePlan(); curPage = 0; dtrack.scrollLeft = 0; Roster.render(); if (app.dataset.tab === 'today') renderToday(false); }
+    if (d !== lastDay) { lastDay = d; if (C.pruneDays(S, nowAbs())) save(); if (C.prunePlan(PL, nowAbs())) savePlan(); if (pruneHome(nowAbs())) save(); curPage = 0; dtrack.scrollLeft = 0; Roster.render(); if (app.dataset.tab === 'today') renderToday(false); }
   }
   setInterval(tick, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
