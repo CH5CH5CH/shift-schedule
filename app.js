@@ -490,10 +490,13 @@
   }
 
   const REL = ['오늘', '내일', '모레'];
+  /* 오늘 페이지가 다른 날짜 근무를 계산하는가(그날 출발 뒤, 다음 출발 24시간 전 휴무 날) — 그 근무(target), 아니면 null */
+  const prepOf = P => (P.isToday && P.vm.type === 'work' && P.vm.target.key !== P.date ? P.vm.target : null);
+  const mdS = k => k.slice(5).split('-').map(Number).join('/'); // 11/25
   function dheadHTML(P) {
-    // QA-009 B(v15): 오늘 페이지가 다른 날짜 근무를 계산하면(그날 출발 뒤, 다음 출발 24시간 전 휴무 날) 어느 날짜 근무 준비인지 한 줄로. 숫자·계산·저장은 그대로
-    const v = P.vm, T = P.isToday && v.type === 'work' && v.target.key !== P.date ? v.target : null;
-    if (T) { const g = T.day - P.d, sd = T.key.slice(5).split('-').map(Number).join('/');
+    // QA-009 B(v15): 오늘 페이지가 다른 날짜 근무를 계산하면 어느 날짜 근무 준비인지 한 줄로. 숫자·계산·저장은 그대로
+    const T = prepOf(P);
+    if (T) { const g = T.day - P.d, sd = mdS(T.key);
       return `<div class="month dhead a1"><h2 class="num" data-dtitle>오늘<span class="rel"> · ${g === 1 || g === 2 ? `${REL[g]}(${sd})` : sd} 근무 준비</span></h2></div>`; }
     return `<div class="month dhead a1"><h2 class="num" data-dtitle>${md(P.date)} (${dow(P.date)})${REL[P.i] ? `<span class="rel"> · ${REL[P.i]}</span>` : ''}</h2>${P.isToday ? '' : '<button class="golink" data-act="gotoday">오늘로</button>'}</div>`;
   }
@@ -597,6 +600,8 @@
     tt += afterHTML(v.after, 'post', tasks) + homeRowHTML(v.after, `${T.ot === 'post' ? '택시·차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}`, 'post', 'home');
     h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
       <div class="glass tt">${tt}</div>${noteHTML(P)}<div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
+    // v16(QA-009 후속): 다른 날짜 근무 준비를 보일 때만 그날 달력 날짜의 주간 항목 — 주간 하루 보기 카드와 같은 모양·데이터, 계산·시간표·끌기와 무관
+    if (prepOf(P)) h += `<div class="sec a4"><div class="sec-t"><span class="label">오늘(${mdS(P.date)}) 할 일</span></div>${Week.cardHTML(P.date)}</div>`;
     return h;
   }
 
@@ -672,6 +677,7 @@
     const pg = b.closest('.dpage'); if (!pg) return;
     const P = pages[+pg.dataset.i]; if (!P) return;
     const a = b.dataset.act, i = +b.dataset.i, v = P.vm;
+    if (b.closest('.wtoday')) { Week.act(b); if (!sheetOpen()) renderToday(false); return; } // v16 오늘 날짜 할 일 칸: 주간과 같은 처리
     if (a === 'gotoday') { setPage(0); return; }
     // 근무일 계산이면 그 근무 날짜, 휴무 화면·다음 근무 없음이면 그 페이지 날짜의 시트를 연다(QA-003: 휴무 날도 시트가 열림)
     if (a === 'roster') { go('roster'); Roster.openDay(v && v.target && v.type === 'work' ? v.target.key : P.date); return; }
@@ -989,8 +995,34 @@
 
     /* 「+ 추가」 · 「할 일 고치기」 같은 시트(W3, v13): 이름은 직접 입력만 → 넣을 날 → 요일 → 매주 반복.
        추가는 시간 없음(오늘 탭에서 「시간 정하기」). 고치기는 지금 값이 미리 들어가고 버튼이 「고치기」 */
+    /* v16 「앞으로 「이름」 모두 지우기」: 기본 목록 이름이 아니고, 고른 날 다음에도 같은 이름(저장된 날 또는 반복 규칙)이 있을 때만 */
+    function laterHas(k0, n) {
+      if (Object.keys(S.days).some(dk => dk > k0 && S.days[dk].tasks.some(x => x.n === n))) return true;
+      const d0 = C.keyToDay(k0), end = C.keyToDay(C.RANGE_END);
+      return PL.rules.some(r => { if (r.n !== n) return false; for (let d = d0 + 1; d <= end; d++) if (C.ruleOn(S, r, d)) return true; return false; });
+    }
+    /* 고른 날(k0)부터 앞으로 같은 이름 항목을 모두 지움(1회·반복·퇴근 후 모두). 반복 규칙은 k0 전날로 끝냄(k0부터 시작한 규칙은 삭제). 그 앞 날 항목·체크는 그대로.
+       한꺼번에 지운 항목은 오늘 탭 「다시 넣기」 칩에 남기지 않는다 */
+    function delFrom(k0, n) {
+      Object.keys(S.days).forEach(dk => {
+        if (dk < k0 || !S.days[dk].tasks.some(x => x.n === n)) return;
+        S.days[dk].tasks = S.days[dk].tasks.filter(x => x.n !== n); unmark(dk, n);
+      });
+      PL.rules.slice().forEach(r => {
+        if (r.n !== n) return;
+        if (r.from >= k0) PL.rules.splice(PL.rules.indexOf(r), 1);
+        else if (!r.until || r.until >= k0) r.until = K(C.keyToDay(k0) - 1);
+      });
+    }
     function addSheet(k0, edit) {
       const d0 = C.keyToDay(k0), mon = C.weekStart(d0), t = tday();
+      const canDelAll = !!edit && !S.base.some(x => x.n === edit.n) && laterHas(k0, edit.n);
+      /* 두 번 누르기 확인(v16, 사용자 결정): 첫 번째는 글자만 「N개 지우기 · 한 번 더 누르기」(N = 그날부터 근무표 범위 끝까지 지워질 항목 수), 두 번째에 지움.
+         시트 안 다른 곳을 누르면 처음 글자로(다시 그리지 않고 글자만 — 이름 칸 입력이 끊기지 않게). 시트를 닫으면 다음에 열 때 처음 상태 */
+      let armed = false;
+      const delLabel = () => `앞으로 「${edit.n}」 모두 지우기`;
+      const delCount = () => { let n = 0; for (let d = d0, end = C.keyToDay(C.RANGE_END); d <= end; d++) n += C.dayItems(ST(), K(d)).filter(x => x.n === edit.n).length; return n; };
+      const arm = on => { armed = on; const x = $('[data-delall]', sheet); if (x) x.textContent = on ? `${delCount()}개 지우기 · 한 번 더 누르기` : delLabel(); };
       const days = Array.from({ length: 7 }, (_, i) => mon + i), future = days.filter(d => d >= t);
       const isWork = d => { const r = S.roster[K(d)]; return !!r && r.s !== 'off'; };
       let typed = '', mode = 'one', picked = new Set([d0]), quick = null, rep = false;
@@ -1032,17 +1064,20 @@
           <div class="days7" data-days>${days.map(d => { const k = K(d), r = S.roster[k], on = tg.includes(d); return `<button data-d="${d}" class="${on ? 'on' : ''}"${d < t ? ' disabled' : ''}>${dow(k)}<small>${r ? (r.s === 'off' ? '휴무' : r.s) : ''}</small></button>`; }).join('')}</div>
           <button class="rowopt" data-rep><span>매주 반복 ↻<small>다음 주에도 ${mode === 'all' ? '매일' : quick === 'work' ? '근무일마다' : quick === 'off' ? '휴무일마다' : '같은 요일에'} 들어가요</small></span><span class="tgl${rep ? '' : ' no'}"></span></button>
           <p class="dupnote" data-dupnote hidden></p>
-          <button class="go" data-go>${label()}</button><button class="close" data-x>닫기</button>`);
+          <button class="go" data-go>${label()}</button>${canDelAll ? `<button class="close" data-delall>${esc(delLabel())}</button>` : ''}<button class="close" data-x>닫기</button>`);
         const inp = $('[data-typed]', sheet);
         if (inp) inp.oninput = () => { typed = inp.value; refresh(); };
         refresh();
       };
       openSheet('', e => {
-        const b = e.target.closest('button'); if (!b || b.disabled) return;
+        const b = e.target.closest('button');
+        if (armed && !(b && b.hasAttribute('data-delall'))) arm(false); // 다른 곳을 누르면 처음 상태로
+        if (!b || b.disabled) return;
         if (b.dataset.mode) { mode = b.dataset.mode; quick = null; if (mode === 'pick') picked = new Set(future.filter(d => d === d0)); draw(); }
         else if (b.dataset.quick) { quick = quick === b.dataset.quick ? null : b.dataset.quick; mode = 'pick'; picked = new Set(quick ? future.filter(d => (quick === 'work') === isWork(d)) : []); draw(); }
         else if (b.dataset.d != null) { const d = +b.dataset.d; if (mode !== 'pick') { picked = new Set(targets()); mode = 'pick'; } quick = null; picked.has(d) ? picked.delete(d) : picked.add(d); draw(); }
         else if (b.hasAttribute('data-rep')) { rep = !rep; draw(); }
+        else if (b.hasAttribute('data-delall')) { if (!armed) { arm(true); return; } delFrom(k0, edit.n); closeSheet(); done(); renderToday(false); }
         else if (b.hasAttribute('data-go')) {
           if (!ok()) return;
           const n = name(), tg = targets(), kind = quick || (mode === 'all' ? 'daily' : 'wd');
@@ -1108,8 +1143,13 @@
       C.carryList(ST(), t).forEach(x => { if (addItem(tk, { n: x.n, m: x.m }, true)) pmark(yk).cf[x.n] = tk; });
       done();
     }
-    el.addEventListener('click', e => {
-      const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+    /* v16: 오늘 탭 「오늘(M/D) 할 일」 칸 — 하루 보기 카드와 같은 항목 줄(체크 · 이름 누르면 고치기 · ×) + 「+ 추가」 */
+    function cardHTML(k) {
+      return `<div class="dc glass focus wtoday" data-k="${k}"><div class="items">${C.weekItems(ST(), k).map(x => itemHTML(k, x, true, false)).join('')}</div><button class="addi" data-act="add" data-k="${k}">+ 추가</button></div>`;
+    }
+    el.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (b && !b.disabled) act(b); });
+    function act(b) {
+      if (!b || b.disabled) return;
       const a = b.dataset.act, [lo, hi] = limits();
       if (a === 'prev') { wk0 = Math.max(lo, wk0 - 7); sel = null; render(); }
       else if (a === 'next') { wk0 = Math.min(hi, wk0 + 7); sel = null; render(); }
@@ -1121,8 +1161,8 @@
       else if (a === 'wdel') { removeItem(b.dataset.k, b.dataset.n); done(); renderToday(false); } // 반복 항목도 그날 것만(v13)
       else if (a === 'memo') memoSheet();
       else if (a === 'carry') carry();
-    });
-    return { render };
+    }
+    return { render, cardHTML, act };
   })();
 
   /* ───────── 탭 · 패럴랙스 · 시계 ───────── */
