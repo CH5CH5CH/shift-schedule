@@ -12,8 +12,8 @@ button{-webkit-user-select:none;user-select:none}
 /* ── 테마 6개 ── */
 :root[data-theme=p0l]{--bg1:#F4F2FA;--bg2:#ECE8F7;--b1:#C6BBF2;--b2:#EDC3E6;--text:#241A45;--muted:#665D85;--accent:#5A45C4;--on:#FFFFFF;--ml:#6E5BD0;--moon:url(moon/p0l.webp)}
 :root[data-theme=p0d]{--bg1:#131A3D;--bg2:#241A46;--b1:#3550C8;--b2:#7C40A4;--text:#EEF0FF;--muted:#A6ABCC;--accent:#A9B8FF;--on:#0E1430;--ml:#C9D2FF;--moon:url(moon/p0d.webp)}
-:root[data-theme=p1l]{--bg1:#FDF5F3;--bg2:#F9EBEC;--b1:#F4BFC8;--b2:#EFC9DC;--text:#3B2228;--muted:#795C63;--accent:#B6586F;--ink:#A0455C;--on:#FFFFFF;--ml:#D98A9C;--moon:url(moon/p1l.webp)}
-:root[data-theme=p1d]{--bg1:#2A1A20;--bg2:#321C28;--b1:#7A3A4E;--b2:#5E2E4A;--text:#FCEFF1;--muted:#C9A6AF;--accent:#F4B2C0;--on:#3A1822;--ml:#F7C9D3;--moon:url(moon/p1d.webp)}
+:root[data-theme=p1l]{--bg1:#FDF5F3;--bg2:#F9EBEC;--b1:#F4BFC8;--b2:#EFC9DC;--text:#3B2228;--muted:#7C5A55;--accent:#EDBDBE;--ink:#93504C;--on:#6B3A3A;--ml:#D98A9C;--moon:url(moon/p1l.webp)} /* 봄 핑크 → 블러시(v12, 친구 UT 11/24 · 시안 design/blush-theme-v5.html) */
+:root[data-theme=p1d]{--bg1:#2B1A1E;--bg2:#351F25;--b1:#784250;--b2:#5E3341;--text:#FBEFEC;--muted:#CDAFAA;--accent:#E9B2B4;--ink:#F0B9B6;--on:#3A1F1E;--ml:#F4CFD0;--moon:url(moon/p1d.webp)} /* ml은 새 accent와 같은 색상(358°)으로 맞춤 */
 :root[data-theme=p2l]{--bg1:#F7F6F9;--bg2:#EFEDF3;--b1:#E3D6F0;--b2:#F2DDB4;--text:#25222E;--muted:#666171;--accent:#C9A043;--ink:#7F5E03;--on:#241C0C;--ml:#C9A043;--moon:url(moon/p2l.webp)}
 :root[data-theme=p2d]{--bg1:#141319;--bg2:#1D1B25;--b1:#3A3550;--b2:#4A3F2A;--text:#F3EFE6;--muted:#ABA59A;--accent:#E9C887;--on:#241C0C;--ml:#F0D9A6;--moon:url(moon/p2d.webp)}
 :root[data-theme$=d]{--glass:rgba(255,255,255,.08);--gline:rgba(255,255,255,.14);--task:rgba(255,255,255,.13);
@@ -24,6 +24,9 @@ button{-webkit-user-select:none;user-select:none}
   --lit:rgba(255,255,255,1);--litin:rgba(255,255,255,.75);--cast:rgba(40,40,80,.14);
   --star:0;--blur:12px;--sat:160%;--blobop:1;--blobblur:30px;--skyglow:rgba(255,255,255,.65);
   --bigshadow:0 1px 0 rgba(255,255,255,.6)}
+/* 블러시(봄 핑크) 선택 안 된 칸: 공통 --task(회색빛 rgba)는 분홍 위에서 회색으로 보여 이 테마만 따로 */
+:root[data-theme=p1l]{--task:#F1DBDB}
+:root[data-theme=p1d]{--task:#523B3F}
 :root{--ot:#F6C453;--oton:#2A1E05;
   --safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);
   --tab-b:max(18px,var(--safe-b))}
@@ -57,8 +60,8 @@ button{-webkit-user-select:none;user-select:none}
 
 .views{position:absolute;inset:0;z-index:1;overflow:clip}
 .view{position:absolute;inset:0;transition:transform .45s cubic-bezier(.2,.8,.2,1),opacity .35s;opacity:0;transform:translateX(8%);pointer-events:none;visibility:hidden}
-.app[data-tab=today] .view[data-v=today],.app[data-tab=roster] .view[data-v=roster],.app[data-tab=tasks] .view[data-v=tasks]{opacity:1;transform:none;pointer-events:auto;visibility:visible}
-.app[data-tab=roster] .view[data-v=today],.app[data-tab=tasks] .view[data-v=today],.app[data-tab=tasks] .view[data-v=roster]{transform:translateX(-8%)}
+.app[data-tab=today] .view[data-v=today],.app[data-tab=week] .view[data-v=week],.app[data-tab=roster] .view[data-v=roster],.app[data-tab=tasks] .view[data-v=tasks]{opacity:1;transform:none;pointer-events:auto;visibility:visible}
+.app[data-tab=week] .view[data-v=today],.app[data-tab=roster] .view[data-v=today],.app[data-tab=roster] .view[data-v=week],.app[data-tab=tasks] .view[data-v=today],.app[data-tab=tasks] .view[data-v=week],.app[data-tab=tasks] .view[data-v=roster]{transform:translateX(-8%)}
 .screen{position:relative;height:100%;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none;
   padding:max(58px,calc(var(--safe-t) + 14px)) 20px calc(120px + var(--tab-b))}
 .screen::-webkit-scrollbar{display:none}
@@ -234,7 +237,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .dhead{align-items:center}
 .dhead .rel{font-size:16px;font-weight:700}
 .dwait{display:block;margin-top:8px}
-.mdots i{width:6px;height:6px;border-radius:3px;background:var(--muted);opacity:.35;cursor:pointer;transition:width .2s,opacity .2s}
+.mdots i{width:6px;height:6px;border-radius:3px;background:var(--muted);opacity:.35;cursor:pointer} /* QA-007: 넓이·투명도 전환 없음(중간 모양이 남지 않게) */
 .mdots i.on{width:16px;opacity:1;background:var(--accent)}
 .palette{display:flex;gap:6px;margin-top:12px}
 .palette button{flex:1;padding:12px 0;border-radius:14px;border:1px solid var(--gline);background:var(--glass);color:var(--text);font-size:15px;font-weight:800;cursor:pointer}
@@ -258,6 +261,8 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .tpls{display:flex;flex-wrap:wrap;gap:8px}
 .tpls button{border:1px solid var(--gline);background:var(--glass);color:var(--text);font-size:14px;font-weight:700;padding:10px 12px;border-radius:14px;cursor:pointer;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);max-width:100%}
 .tpls button small{color:var(--muted);font-weight:600;margin-left:4px}
+/* v12 대비: 일찍 나가기 줄 삭제로 할 일 탭이 짧아져 칩이 달·번짐 위로 옮겨감 → 이 작은 글자에만 기존 halo(필요한 곳만, 글자색·칸 색은 그대로). 규칙은 6개 테마 공통 */
+.tpls button small{text-shadow:var(--halo)}
 .tpls button.new{background:var(--accent);color:var(--on);border-color:var(--accent)}
 .earlysc{margin:4px 0 10px}
 .earlysc button{font-size:13px}
@@ -312,3 +317,70 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}
   .restfx .ph{opacity:.85;transform:translate(-50%,0)}}
+
+/* ── 주간 탭(v12, DESIGN.md 4장 「주간 탭」 · 시안 planner-mockup-v3 W1~W3) ── */
+.carry{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 10px 10px 14px;border-radius:16px;border:1px solid var(--gline);background:var(--chip);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);font-size:13px;font-weight:600}
+.carry b{font-weight:800}
+.carry button{margin-left:auto;border:0;background:var(--accent);color:var(--on);font-size:13px;font-weight:800;padding:8px 12px;border-radius:12px;white-space:nowrap;cursor:pointer;min-height:36px}
+.vseg{margin-top:12px}.vseg button{min-height:40px}
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
+.dc{border-radius:18px;padding:10px 11px 6px;min-height:118px;min-width:0;display:flex;flex-direction:column}
+.dc.tdy,.sd.tdy{outline:2px solid var(--text);outline-offset:0}
+.dhd{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dhd .d{font-size:15px;font-weight:800}
+.dhd .d small{font-size:12px;font-weight:600;color:var(--muted);margin-left:2px}
+.sb{font-size:11px;font-weight:800;padding:2px 7px;border-radius:7px;line-height:1.4;border:1px solid transparent}
+.sb.off{border:1.2px dashed var(--muted);color:var(--muted);background:transparent}
+.sb.ot{background:var(--ot);color:var(--oton)}
+/* 항목: 보이는 줄 32px, 터치 영역 44px(.hit) — 줄 사이 12px로 터치 영역이 옆 줄과 겹치지 않게 */
+.items{display:flex;flex-direction:column;gap:12px;margin:10px 0 4px}
+.item{display:flex;align-items:center;gap:4px;min-width:0}
+.ib{flex:1;min-width:0;display:flex;align-items:center;gap:8px;min-height:32px;padding:0;border:0;background:none;color:var(--text);font:inherit;font-size:13px;font-weight:600;text-align:left;cursor:pointer}
+.ib:disabled{cursor:default}
+.cb{width:18px;height:18px;border-radius:6px;border:1.6px solid var(--muted);flex:none;display:grid;place-items:center;background:color-mix(in srgb,var(--bg1) 60%,transparent)}
+.item.done .cb{background:var(--accent);border-color:var(--accent)}
+.item.done .cb::after{content:"";width:5px;height:9px;border:solid var(--on);border-width:0 2px 2px 0;transform:translateY(-1px) rotate(45deg)}
+.ib .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.done .nm,.item.carried .nm{color:var(--muted)}
+.item.done .nm{text-decoration:line-through}
+.item small{margin-left:auto;font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;flex:none}
+.rep{font-size:11px;color:var(--muted);font-weight:800;flex:none}
+.addi{margin-top:auto;border:0;background:none;color:var(--ink,var(--accent));font-size:13px;font-weight:800;padding:6px 0;text-align:left;cursor:pointer;min-height:32px}
+.memo{text-align:left;color:var(--text);cursor:pointer;font:inherit}
+.memo .label{display:block;margin-bottom:4px}
+.memo p{font-size:12.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-top:14px}
+.sd{border-radius:14px;padding:7px 0 6px;display:flex;flex-direction:column;align-items:center;gap:3px;background:var(--glass);border:1px solid var(--gline);cursor:pointer;color:var(--text);font:inherit;min-height:44px}
+.sd .w{font-size:11px;font-weight:700;color:var(--muted)}
+.sd .n2{font-size:16px;font-weight:800}
+.sd .pg{font-size:10px;font-weight:800;color:var(--muted)}
+.sd .st{width:16px;height:4px;border-radius:2px;border:0}
+.sd .st.off{background:transparent;border:1px dashed var(--muted);height:5px}
+.sd.sel{background:var(--accent);border-color:var(--accent)}
+.sd.sel .w,.sd.sel .n2,.sd.sel .pg{color:var(--on)}
+.focus{margin-top:12px;padding:16px 16px 10px}
+.focus .items{gap:0}
+.focus .ib{font-size:15px;min-height:44px}
+.focus .cb{width:22px;height:22px}
+.focus .dhd .d{font-size:18px}
+/* 「+ 추가」 시트 */
+.days7{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-top:8px}
+.days7 button{border:0;background:var(--task);color:var(--text);border-radius:12px;padding:8px 0 6px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:13px;font-weight:800;min-height:44px;cursor:pointer}
+.days7 button small{font-size:10px;font-weight:700;color:var(--muted)}
+.days7 button.on{background:var(--accent);color:var(--on)}
+.days7 button.on small{color:var(--on)}
+.days7 button:disabled{opacity:.35;cursor:default}
+.rowopt{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;margin-top:10px;padding:10px 12px;background:var(--task);border:0;border-radius:12px;font:inherit;font-size:14px;font-weight:700;color:var(--text);text-align:left;cursor:pointer}
+.rowopt small{display:block;font-size:11px;font-weight:500;color:var(--muted)}
+.tgl{width:44px;height:26px;border-radius:13px;background:var(--accent);position:relative;flex:none}
+.tgl::after{content:"";position:absolute;right:3px;top:3px;width:20px;height:20px;border-radius:50%;background:var(--on)}
+.tgl.no{background:color-mix(in srgb,var(--muted) 40%,transparent)}
+.tgl.no::after{right:auto;left:3px;background:var(--bg1)}
+.go:disabled{opacity:.45;cursor:default}
+.memoin{min-height:120px;resize:vertical;font-weight:600;line-height:1.6}
+/* 주간 탭 대비(contrast-check, 6개 테마): 유리 칸 위 작은 muted 글자·「+ 추가」는 달·블롭 위에서 4.5:1이 안 나와 기존 halo를 쓴다(필요한 곳만, 고른 날 칸 제외) */
+.dhd .d small,.sb.off,.rep,.item.done .nm,.item.carried .nm,.item small,.addi,.sd:not(.sel) .w,.sd:not(.sel) .pg,.memo p .hint{text-shadow:var(--halo)}
+
+/* 블러시(봄 핑크) 선택된 칸: 기상 알약 · 세그먼트 선택 · 잠 막대 — 그러데이션 + 그림자 + 위쪽 흰 하이라이트, 테두리 없음(시안 blush-theme-v5) */
+:root[data-theme=p1l] .pill.wake,:root[data-theme=p1l] .seg button.on,:root[data-theme=p1l] .sg.s{background:linear-gradient(160deg,#F3C9C9,#E9B2B4);border-color:transparent;box-shadow:0 6px 16px -6px rgba(150,80,80,.35),inset 0 1px 0 rgba(255,255,255,.7)}
+:root[data-theme=p1d] .pill.wake,:root[data-theme=p1d] .seg button.on,:root[data-theme=p1d] .sg.s{background:linear-gradient(160deg,#EDBCBD,#E3A7AA);border-color:transparent;box-shadow:0 6px 18px -6px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.5)}

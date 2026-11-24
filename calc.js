@@ -58,8 +58,8 @@
   }
   const defaultRoster = () => fillRoster({}, ANCHOR.key, ANCHOR.shift, ANCHOR.nth);
 
-  /* 일찍 나가기 적용 여부: 전OT 날(회사로 직접 가는 날)은 항상, 그 밖은 「모든 날」일 때만 */
-  const earlyFor = (ot, early) => (ot === 'pre' || early.sc === 'all') ? early.m : 0;
+  /* 일찍 나가기는 v12에서 삭제(친구 UT 11/24: 헷갈림) — 항상 0분. 저장된 early 값은 읽어도 무시한다(롤백 대비로 지우지는 않음) */
+  const earlyFor = () => 0;
   const defaultMode = (s, ot) => (s === 'A' || ot === 'pre') ? 'taxi' : 'bus';
 
   /* 이동수단 선택지와 각 출발 시각 (spec 5장) */
@@ -90,6 +90,62 @@
     return st.today && st.today.key === k ? st.today : null;
   }
   const sumM = tasks => tasks.reduce((a, x) => a + (Number.isFinite(x.m) ? x.m : 0), 0);
+
+  /* ── v12 주간 플래너 (spec 7-1장) ──
+     plan(별도 저장 키, v11이 읽지 않음): rules 반복 규칙, memos 주간 메모, days[날짜] 주간 표시(w 주간 항목 이름, r 이름→규칙 id, cf 이름→이월한 날짜, skip 이 날만 지운 규칙 id),
+     wk 주간에 보이는 기본 목록 이름, ui 마지막 보기. 같은 날 같은 이름은 하나뿐이라 (날짜, 이름)으로 항목을 구분한다 */
+  const PLAN_WK = ['공부', '헬스']; // 주간에 보이기 기본값(사용자 결정 11/24): 잠 깨기·밥 끔, 공부·헬스 켬
+  function planDefault() { return { v: 1, rules: [], memos: {}, days: {}, wk: PLAN_WK.slice(), ui: { week: 'week' } }; }
+  const weekday = d => { const w = new Date(d * 864e5).getUTCDay(); return w === 0 ? 7 : w; }; // 1=월 … 7=일
+  const weekStart = d => d - (weekday(d) - 1);                                                  // 그 주 월요일
+  function weekLabel(mon) { const th = dayToKey(mon + 3).split('-').map(Number); return `${th[1]}월 ${Math.ceil(th[2] / 7)}주`; }
+  /* 반복 규칙이 그날에 해당하는가: daily 매일, wd 고른 요일, work·off 근무표 기준(근무일·휴무일) */
+  function ruleOn(st, rule, d) {
+    const k = dayToKey(d);
+    if (k < rule.from || (rule.until && k > rule.until)) return false;
+    if (rule.kind === 'daily') return true;
+    if (rule.kind === 'wd') return Array.isArray(rule.wd) && rule.wd.includes(weekday(d));
+    const r = st.roster[k];
+    if (rule.kind === 'work') return !!r && !!SHIFTS[r.s];
+    if (rule.kind === 'off') return !!r && r.s === 'off';
+    return false;
+  }
+  const planDay = (pl, k) => (pl && pl.days && pl.days[k]) || null;
+  /* 그날 목록(오늘 탭·주간 탭·수면 계산이 모두 쓰는 한 곳).
+     저장된 목록(없으면 기본 목록) + 그날 해당 반복 규칙 항목(같은 이름이 있거나 이 날만 지웠으면 넣지 않음, 규칙 만든 순서) */
+  function dayItems(st, k) {
+    const t = dayOf(st, k);
+    const own = t ? t.tasks : st.base;
+    const out = own.map(x => ({ n: x.n, m: x.m, done: !!x.done, bh: !!x.bh })); // bh: 집 오기 전(v13 예약, 계산에 안 씀)
+    const pl = st.plan;
+    if (!pl || !Array.isArray(pl.rules) || !pl.rules.length) return out;
+    const names = new Set(out.map(x => x.n)), pd = planDay(pl, k), skip = (pd && pd.skip) || [], d = keyToDay(k);
+    pl.rules.forEach(r => {
+      if (skip.includes(r.id) || names.has(r.n) || !ruleOn(st, r, d)) return;
+      names.add(r.n); out.push({ n: r.n, m: r.m, done: false, bh: false, rule: r.id });
+    });
+    return out;
+  }
+  /* 주간에 보이는 항목: 주간에서 넣은 것(w) + 반복 항목 + 「주간에 보이기」가 켜진 기본 목록 이름. 각 항목에 rule·carried 표시를 붙인다 */
+  function weekItems(st, k) {
+    const pl = st.plan || planDefault(), pd = planDay(pl, k) || {}, w = pd.w || [], r = pd.r || {}, cf = pd.cf || {}, wk = pl.wk || [];
+    return dayItems(st, k).map(x => Object.assign(x, { rule: x.rule || r[x.n] || null, carried: cf[x.n] || null }))
+      .filter(x => w.includes(x.n) || x.rule || wk.includes(x.n));
+  }
+  /* 이월 후보: 어제(달력 날짜) 주간 항목 중 체크 안 됨 · 반복 아님 · 이미 이월 안 함 · 오늘 같은 이름 없음. 자동으로 옮기지 않는다 */
+  function carryList(st, today) {
+    const names = new Set(dayItems(st, dayToKey(today)).map(x => x.n));
+    return weekItems(st, dayToKey(today - 1)).filter(x => !x.done && !x.rule && !x.carried && !names.has(x.n));
+  }
+  /* 지난 날 주간 표시·메모 정리: 오늘 − 13일보다 앞선 날짜, 그 주 일요일이 그보다 앞선 메모(v11 days와 같은 14일 기준) */
+  function prunePlan(pl, now) {
+    const minD = Math.floor(now / 1440) - 13, min = dayToKey(minD);
+    let n = 0;
+    Object.keys(pl.days || {}).forEach(k => { if (k < min) { delete pl.days[k]; n++; } });
+    Object.keys(pl.memos || {}).forEach(k => { if (keyToDay(k) + 6 < minD) { delete pl.memos[k]; n++; } });
+    (pl.rules || []).slice().forEach(r => { if (r.until && r.until < min) { pl.rules.splice(pl.rules.indexOf(r), 1); n++; } });
+    return n;
+  }
 
   /* 계산 대상 = 지금 이후 가장 먼저 오는 출발 (spec 9장 해석, 사용자 확인 2026-11-23) */
   function findTarget(st, now) {
@@ -139,7 +195,7 @@
     // 상태 키: 근무일 계산은 근무 시작 날짜(T.key), 휴무 화면은 오늘 날짜(v11). v10 형식이면 둘 다 T.key
     const key = offScreen && st.days ? dayToKey(today) : T.key;
     const t = dayOf(st, key);
-    const tasks = t ? t.tasks : st.base;
+    const tasks = dayItems(st, key);
     const total = sumM(tasks);
     const meal = t ? t.meal : 60, eat = t ? !!t.eat : false;
     const base = { key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T, prog, tasks };
@@ -194,7 +250,7 @@
     const common = { key, day: d, now, today, future: true, prog: null, late: false, nowSleep: null };
     if (!r || !(r.s === 'off' || SHIFTS[r.s])) return Object.assign(common, { type: 'none' });
     const t = st.days ? st.days[key] || null : null;
-    const tasks = t ? t.tasks : st.base, total = sumM(tasks);
+    const tasks = dayItems(st, key), total = sumM(tasks);
     const p = st.roster[dayToKey(d - 1)], prevC = !!p && p.s === 'C';
     const home = prevC ? homeArrival(d - 1, 'C', p.ot, st.move) : null;
     if (r.s === 'off') {
@@ -232,7 +288,7 @@
     delete st.today;
     if (!old || typeof old.key !== 'string' || !Array.isArray(old.tasks)) return false;
     const conv = () => ({
-      tasks: old.tasks.map(x => ({ n: x.n, m: x.m, done: false })),
+      tasks: old.tasks.map(x => ({ n: x.n, m: x.m, done: false, bh: false })),
       removed: Array.isArray(old.removed) ? old.removed.map(x => ({ n: x.n, m: x.m })) : [],
       mode: old.mode == null ? null : old.mode, eat: !!old.eat, meal: Number.isFinite(old.meal) ? old.meal : 60,
       rest: !!old.rest, wake: old.wake == null ? null : old.wake,
@@ -256,6 +312,7 @@
     keyToDay, dayToKey, nowAbs, fmt, dur, fillRoster, defaultRoster, earlyFor, defaultMode,
     depOptions, homeArrival, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
     dayOf, sumM, nextWork, computeDay, migrateToday, pruneDays,
+    PLAN_WK, planDefault, weekday, weekStart, weekLabel, ruleOn, dayItems, weekItems, carryList, prunePlan,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ShiftCalc = api;

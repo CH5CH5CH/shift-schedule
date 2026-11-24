@@ -12,7 +12,6 @@
 
   const PRESET_T = [10, 20, 30, 45, 60, 90, 120, 180];
   const PRESET_M = [10, 15, 20, 25, 30, 40, 50, 60];
-  const PRESET_E = [0, 10, 15, 20, 30, 40, 50, 60];
   const WAKES = [9, 10, 11, 12, 13, 14, 15, 16].map(h => h * 60);
   const PHRASES = ['오늘은 쉬어요~', '오늘은 푹 자요~', '알람 없는 날', '아무것도 안 정해도 괜찮아요', '천천히 일어나요', '달도 쉬어 가는 날'];
   const THEMES = [['p0', '오로라 퍼플'], ['p1', '봄 핑크'], ['p2', '샴페인 문라이트']];
@@ -26,7 +25,7 @@
     return {
       v: 1,
       roster: C.defaultRoster(),
-      base: [{ n: '잠 깨기', m: 20 }, { n: '공부', m: 60 }, { n: '헬스', m: 120, sub: '이동 포함' }, { n: '밥', m: 60 }],
+      base: [{ n: '잠 깨기', m: 20, bh: false }, { n: '공부', m: 60, bh: false }, { n: '헬스', m: 120, sub: '이동 포함', bh: false }, { n: '밥', m: 60, bh: false }],
       tpl: [{ n: '공부 준비', m: 10 }, { n: '홈트', m: 60 }, { n: '씻기', m: 20 }, { n: '자유시간', m: 30 }, { n: '장보기', m: 30 }],
       move: { bus: 40, taxi: 20, car: 50, ride: 70 },
       early: { m: 40, sc: 'ot' },
@@ -45,7 +44,7 @@
       const v = d[k];
       if (!isDayKey(k) || !v || !Array.isArray(v.tasks) || !v.tasks.every(isTask)) return;
       out[k] = {
-        tasks: v.tasks.map(x => ({ n: x.n, m: x.m, done: !!x.done })),
+        tasks: v.tasks.map(x => ({ n: x.n, m: x.m, done: !!x.done, bh: !!x.bh })), // bh: 집 오기 전(v13 예약, 아직 안 씀)
         removed: Array.isArray(v.removed) ? v.removed.filter(isTask).map(x => ({ n: x.n, m: x.m })) : [],
         mode: typeof v.mode === 'string' ? v.mode : null, eat: !!v.eat, meal: Number.isFinite(v.meal) ? v.meal : 60,
         rest: !!v.rest, wake: Number.isFinite(v.wake) ? v.wake : null,
@@ -73,10 +72,10 @@
       const o = {
         v: 1,
         roster: Object.assign(d.roster, s.roster && typeof s.roster === 'object' ? s.roster : {}),
-        base: isList(s.base) ? s.base : d.base,
+        base: (isList(s.base) ? s.base : d.base).map(x => Object.assign({}, x, { bh: !!x.bh })), // bh: 집 오기 전(v13 예약)
         tpl: isList(s.tpl) ? s.tpl : d.tpl,
         move: Object.assign(d.move, s.move),
-        early: Object.assign(d.early, s.early),
+        early: Object.assign(d.early, s.early), // v12: 계산에 쓰지 않음(일찍 나가기 삭제). 롤백 대비로 값은 보존
         theme: Object.assign(d.theme, s.theme),
         days: readDays(s.days),
         // v10 형식 오늘 상태 — 아래에서 days로 옮기고 지운다(저장 형식 번호는 1 그대로, 롤백 호환)
@@ -96,8 +95,67 @@
   }
   const S = load();
   if (migrated) save(); // 이전·정리 결과를 바로 저장(원본은 백업 키에 있음)
-  const freshDay = () => ({ tasks: clone(S.base).map(t => ({ n: t.n, m: t.m, done: false })), removed: [], mode: null, eat: false, meal: 60, rest: false, wake: null });
-  const dayEdit = k => S.days[k] || (S.days[k] = freshDay());
+
+  /* v12 플래너 저장: 반복 규칙·주간 메모·날짜별 주간 표시는 별도 키(PKEY). v11은 이 키를 읽지도 쓰지도 않아 롤백했다 돌아와도 남는다.
+     본 키(days)에는 v11이 읽는 칸(이름·시간·체크)만 둔다. 같은 날 같은 이름은 하나뿐이라 (날짜, 이름)으로 항목을 구분 */
+  const PKEY = KEY + '-plan';
+  const isStrArr = a => Array.isArray(a) && a.every(x => typeof x === 'string');
+  function loadPlan() {
+    const d = C.planDefault();
+    let raw = null;
+    try { raw = localStorage.getItem(PKEY); } catch (e) { return d; }
+    if (raw == null) return d;
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object' || s.v !== 1) { backup(raw); return d; }
+    const KINDS = ['daily', 'wd', 'work', 'off'];
+    d.rules = Array.isArray(s.rules) ? s.rules.filter(r => r && typeof r.id === 'string' && typeof r.n === 'string' && KINDS.includes(r.kind) && isDayKey(r.from) && (r.until == null || isDayKey(r.until)) && (r.m === undefined || Number.isFinite(r.m)))
+      .map(r => ({ id: r.id, n: r.n, m: r.m, kind: r.kind, wd: Array.isArray(r.wd) ? r.wd.filter(x => x >= 1 && x <= 7) : [], from: r.from, until: r.until || null })) : [];
+    if (s.memos && typeof s.memos === 'object') Object.keys(s.memos).forEach(k => { if (isDayKey(k) && typeof s.memos[k] === 'string') d.memos[k] = s.memos[k]; });
+    if (s.days && typeof s.days === 'object') Object.keys(s.days).forEach(k => {
+      const v = s.days[k]; if (!isDayKey(k) || !v || typeof v !== 'object') return;
+      const obj = o => (o && typeof o === 'object' && !Array.isArray(o) ? o : {});
+      d.days[k] = { w: isStrArr(v.w) ? v.w : [], r: obj(v.r), cf: obj(v.cf), skip: isStrArr(v.skip) ? v.skip : [] };
+    });
+    if (isStrArr(s.wk)) d.wk = s.wk;
+    if (s.ui && (s.ui.week === 'week' || s.ui.week === 'day')) d.ui.week = s.ui.week;
+    return d;
+  }
+  const PL = loadPlan();
+  function savePlan() { try { localStorage.setItem(PKEY, JSON.stringify(PL)); } catch (e) { saveFailed = true; } }
+  if (C.prunePlan(PL, C.nowAbs(new Date()))) savePlan();
+  const ST = () => Object.assign({}, S, { plan: PL }); // 계산에 넘기는 상태(본 저장값 + 플래너)
+  const pmark = k => PL.days[k] || (PL.days[k] = { w: [], r: {}, cf: {}, skip: [] });
+  function unmark(k, n) { const m = PL.days[k]; if (!m) return; m.w = m.w.filter(x => x !== n); delete m.r[n]; }
+  const hasName = (k, n) => C.dayItems(ST(), k).some(x => x.n === n);
+  /* 그날을 바꾸는 순간: 지금 보이는 목록(기본 목록 + 반복 항목) 그대로 저장한 뒤 바꾼다. 이미 저장된 날도 새 반복 항목을 같은 순서로 붙인다 */
+  function dayEdit(k) {
+    const items = C.dayItems(ST(), k);
+    if (!S.days[k]) S.days[k] = { tasks: [], removed: [], mode: null, eat: false, meal: 60, rest: false, wake: null };
+    const t = S.days[k], have = new Set(t.tasks.map(x => x.n));
+    items.forEach(x => {
+      if (have.has(x.n)) return;
+      have.add(x.n); t.tasks.push({ n: x.n, m: x.m, done: !!x.done, bh: !!x.bh });
+      if (x.rule) pmark(k).r[x.n] = x.rule;
+    });
+    return t;
+  }
+  /* 그날에서 항목 빼기(어느 화면이든 같은 규칙): 반복 항목이면 그날만 건너뛰게 skip에 넣고, 시간 있는 항목은 오늘 탭 「다시 넣기」 칩에 남긴다 */
+  function removeItem(k, n) {
+    const t = dayEdit(k), i = t.tasks.findIndex(x => x.n === n); if (i < 0) return null;
+    const it = t.tasks.splice(i, 1)[0], rid = PL.days[k] && PL.days[k].r[n];
+    if (rid) { const m = pmark(k); if (!m.skip.includes(rid)) m.skip.push(rid); }
+    if (Number.isFinite(it.m)) t.removed.push({ n: it.n, m: it.m });
+    unmark(k, n);
+    return it;
+  }
+  /* 같은 날 같은 이름은 어떤 경로로든 넣지 않는다(사용자 결정 11/24) — 넣었으면 true */
+  function addItem(k, it, weekly) {
+    if (hasName(k, it.n)) return false;
+    dayEdit(k).tasks.push({ n: it.n, m: it.m, done: false, bh: false });
+    if (weekly) { const m = pmark(k); if (!m.w.includes(it.n)) m.w.push(it.n); }
+    return true;
+  }
 
   /* ───────── 테마 ───────── */
   function applyTheme() {
@@ -145,6 +203,12 @@
   /* ───────── 끌어서 순서 바꾸기 (⠿ 손잡이) ───────── */
   let dragging = false;
   const moveItem = (a, f, t) => a.splice(t, 0, a.splice(f, 1)[0]);
+  /* 시간 있는 항목끼리만 순서 바꾸기(f·t는 시간표에 보이는 순서). 시간 없는 항목은 제자리 */
+  function moveTimed(list, f, t) {
+    const idx = list.map((x, i) => (Number.isFinite(x.m) ? i : -1)).filter(i => i >= 0), timed = idx.map(i => list[i]);
+    moveItem(timed, f, t);
+    idx.forEach((i, j) => { list[i] = timed[j]; });
+  }
   function sortable(list, itemSel, onMove) {
     $$(itemSel + ' .grip', list).forEach(g => {
       g.onclick = e => e.stopPropagation();
@@ -213,15 +277,17 @@
   function tasksHTML(tasks, from, freshIdx) {
     let t = from;
     return tasks.map((k, i) => {
-      const m = Number.isFinite(k.m) ? k.m : 0;
+      if (!Number.isFinite(k.m)) return ''; // 시간 없는 항목은 오늘 시간표에 보이지 않음(v12). data-i는 전체 목록 기준
+      const m = k.m;
       const h = `<div class="tk${i === freshIdx ? ' new' : ''}" data-i="${i}"><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       t += m; return h;
     }).join('');
   }
-  function spareHTML(key) {
-    const d = key ? S.days[key] : null, rm = d ? d.removed : [], names = new Set(rm.map(x => x.n));
-    return rm.map((x, i) => `<button data-act="back" data-i="${i}">+ ${esc(x.n)} ${dur(x.m)}</button>`).join('')
-      + S.tpl.map((x, i) => names.has(x.n) ? '' : `<button data-act="tpl" data-i="${i}">+ ${esc(x.n)} ${dur(x.m)}</button>`).join('')
+  function spareHTML(key, list) {
+    const d = key ? S.days[key] : null, rm = d ? d.removed : [], names = new Set(rm.map(x => x.n)), have = new Set((list || []).map(x => x.n));
+    // 이미 그날 목록에 있는 이름은 칩을 보이지 않는다(같은 날 같은 이름 금지)
+    return rm.map((x, i) => have.has(x.n) || !Number.isFinite(x.m) ? '' : `<button data-act="back" data-i="${i}">+ ${esc(x.n)} ${dur(x.m)}</button>`).join('')
+      + S.tpl.map((x, i) => names.has(x.n) || have.has(x.n) ? '' : `<button data-act="tpl" data-i="${i}">+ ${esc(x.n)} ${dur(x.m)}</button>`).join('')
       + '<button class="addbtn" data-act="add">+ 새 할 일</button>';
   }
 
@@ -252,13 +318,13 @@
   /* 페이지 계산: 오늘 = computeToday. 오늘 페이지가 이미 계산 중인 근무의 날짜면 같은 숫자(②), 그 밖은 computeDay */
   function computePages() {
     const now = nowAbs(), today = Math.floor(now / 1440);
-    const v0 = C.computeToday(S, now);
+    const v0 = C.computeToday(ST(), now);
     return pageEls.map((_, i) => {
       const d = today + i, date = C.dayToKey(d);
       let vm, dup = false;
       if (i === 0) vm = v0;
       else if (v0.type === 'work' && v0.target.key === date) { vm = v0; dup = true; }
-      else vm = C.computeDay(S, now, d);
+      else vm = C.computeDay(ST(), now, d);
       // 상태 키: 근무 계산은 근무 시작 날짜, 휴무 화면은 그 페이지 날짜(오늘 페이지는 오늘), 없음은 null
       const key = vm.type === 'work' ? vm.target.key : vm.type === 'off' ? vm.key : null;
       return { i, d, date, vm, dup, key, isToday: i === 0 };
@@ -288,28 +354,39 @@
       const big = $('[data-sleep]', el);
       if (big) { if (P.isToday) countSleep(big, v.sleep, animate); else big.innerHTML = sleepHTML(v.sleep); big.classList.toggle('short', v.sleep < 0); }
       const tt = $('.tt', el);
-      if (tt) sortable(tt, '.tk', (f, t) => { moveItem(dayEdit(P.key).tasks, f, t); save(); renderToday(); });
+      if (tt) sortable(tt, '.tk', (f, t) => { moveTimed(dayEdit(P.key).tasks, f, t); save(); savePlan(); renderToday(); });
     });
     fresh = { page: -1, idx: -1 };
-    setPage(curPage, false);
+    applyPage(pendingPage != null ? curPage : pageFromScroll());
   }
 
-  /* 넘기기: 현재 페이지에 맞춰 점·휴식 효과를 바꾼다 */
-  function setPage(i, scroll = true) {
-    curPage = clamp(i, 0, DAYS - 1);
-    if (scroll) dtrack.scrollTo({ left: curPage * dtrack.clientWidth, behavior: reduce ? 'auto' : 'smooth' });
-    $$('i', ddots).forEach((x, k) => x.classList.toggle('on', k === curPage));
+  /* 넘기기(QA-007, v12): 현재 페이지 번호는 스크롤이 멈춘 뒤 반올림한 값 한 곳(applyPage)에서만 정하고, 점 7개는 그 값으로 매번 다시 그린다.
+     점·「오늘로」로 이동할 때는 스크롤만 요청하고, 목표에 닿을 때까지(최대 1.5초) 중간 페이지를 확정하지 않는다 */
+  let pendingPage = null, pendingUntil = 0;
+  const pageFromScroll = () => { const w = dtrack.clientWidth; return w ? clamp(Math.round(dtrack.scrollLeft / w), 0, DAYS - 1) : curPage; };
+  function applyPage(i) {
+    curPage = i;
+    ddots.innerHTML = pageEls.map((_, k) => `<i data-i="${k}"${k === i ? ' class="on"' : ''}></i>`).join('');
     const P = pages[curPage], resting = !!P && P.vm.type === 'off' && P.vm.rest;
     todayView.classList.toggle('resting', resting);
     if (resting && !restfx.children.length) restfx.innerHTML = PHRASES.map((p, k) => `<span class="ph p${k}">${p}</span>`).join('');
     todayView.dataset.page = curPage;
     if (document.getElementById('app').dataset.tab === 'today' && pageEls[curPage]) document.getElementById('app').style.setProperty('--sy', pageEls[curPage].scrollTop);
   }
+  function setPage(i) {
+    i = clamp(i, 0, DAYS - 1);
+    const w = dtrack.clientWidth;
+    if (!w || Math.abs(dtrack.scrollLeft - i * w) < 1) { pendingPage = null; applyPage(pageFromScroll()); return; }
+    pendingPage = i; pendingUntil = Date.now() + 1500;
+    dtrack.scrollTo({ left: i * w, behavior: reduce ? 'auto' : 'smooth' });
+  }
   let dscroll;
-  dtrack.addEventListener('scroll', () => {
-    clearTimeout(dscroll);
-    dscroll = setTimeout(() => { const i = Math.round(dtrack.scrollLeft / dtrack.clientWidth); if (i !== curPage && i >= 0 && i < DAYS) setPage(i, false); }, 80);
-  }, { passive: true });
+  function settlePage() {
+    const i = pageFromScroll();
+    if (pendingPage != null && i !== pendingPage && Date.now() < pendingUntil) { dscroll = setTimeout(settlePage, Math.max(30, pendingUntil - Date.now())); return; }
+    pendingPage = null; applyPage(i);
+  }
+  dtrack.addEventListener('scroll', () => { clearTimeout(dscroll); dscroll = setTimeout(settlePage, 80); }, { passive: true });
   ddots.addEventListener('click', e => { const x = e.target.closest('i'); if (x) setPage(+x.dataset.i); });
 
   function workHTML(v, P) {
@@ -330,7 +407,7 @@
     const parts = [];
     if (!fromNow && v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
-    tasks.forEach(k => parts.push({ cls: 't', m: k.m, txt: k.n }));
+    tasks.forEach(k => { if (Number.isFinite(k.m)) parts.push({ cls: 't', m: k.m, txt: k.n }); });
     h += `<div class="glass hero a2"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
       <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${!noBed && v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
       ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div>`}</div>`;
@@ -349,7 +426,7 @@
     tt += ev('key', !noBed && v.sleep < 0 ? '—' : fmt(v.wake), '일어나기');
     tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1);
     const how = { bus: '시내버스로', taxi: T.ot === 'pre' ? '택시로 회사까지' : '택시로', car: '차로 회사까지' }[v.mode];
-    tt += ev('key', fmt(v.dep), `집에서 출발<small>${how}${v.early ? ` · 여유 ${v.early}분` : ''}</small>`);
+    tt += ev('key', fmt(v.dep), `집에서 출발<small>${how}</small>`);
     if (v.mode !== 'car' && T.ot !== 'pre') tt += ev('', fmt(v.bus), '통근버스 타기');
     if (T.ot === 'pre') tt += ev('ot', fmt(v.start), `<b>전OT 시작</b><small>${T.s}조 근무는 ${fmt(v.shiftStart)}부터</small>`);
     else tt += ev('', fmt(v.start), `${T.s}조 근무 시작`);
@@ -357,7 +434,7 @@
     const nextDay = Math.floor(v.homeAfter / 1440) > T.day;
     tt += ev('home', fmt(v.homeAfter), `집 도착<small>${T.ot === 'post' ? '택시·차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}</small>`);
     h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
-      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key)}</div></div>`;
+      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
     return h;
   }
 
@@ -370,7 +447,7 @@
       .map(([k, l, s]) => `<button data-act="rest" data-k="${k}" class="${+v.rest === k ? 'on' : ''}">${l}<small>${s}</small></button>`).join('')}</div></div>`;
     if (v.rest) return h;
     const noBed = v.sleep == null;
-    const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(tasks.map(k => ({ cls: 't', m: k.m, txt: k.n })));
+    const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(tasks.filter(k => Number.isFinite(k.m)).map(k => ({ cls: 't', m: k.m, txt: k.n })));
     h += `<div class="glass hero a2" style="margin-top:0"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
       <div class="pair"><button class="pill wake" data-act="wake"><small>일어나기</small><b class="num" data-wake>${fmt(v.wake)}</b></button><div class="pill"><small>할 일 끝</small><b class="num" data-dep>${fmt(v.end)}</b></div></div>
       ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null && v.bed === v.home ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div>`}</div>`;
@@ -381,7 +458,7 @@
     tt += tasksHTML(tasks, v.wake, fresh.page === P.i ? fresh.idx : -1);
     tt += ev('key', fmt(v.end), `할 일 끝<small>그다음은 자유${T ? ` · 다음 근무 ${md(T.key)} ${T.s}조` : ''}</small>`);
     h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
-      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key)}</div></div>`;
+      <div class="glass tt">${tt}</div><div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
     return h;
   }
 
@@ -406,8 +483,8 @@
       else if (b.dataset.m != null) { pm = PRESET_T[+b.dataset.m]; draw(); }
       else if (b.hasAttribute('data-go')) {
         const n = (custom ? typed.trim() : pn).slice(0, NAME_MAX) || '새 할 일';
-        const t = dayEdit(P.key);
-        t.tasks.push({ n, m: pm, done: false }); fresh = { page: P.i, idx: t.tasks.length - 1 }; save(); closeSheet(); renderToday();
+        if (!addItem(P.key, { n, m: pm })) { const g = $('[data-go]', sheet); if (g) { g.textContent = `「${n}」은 이미 있어요`; g.disabled = true; } return; }
+        fresh = { page: P.i, idx: S.days[P.key].tasks.length - 1 }; save(); savePlan(); closeSheet(); renderToday();
       } else if (b.hasAttribute('data-x')) closeSheet();
     });
     draw();
@@ -423,15 +500,15 @@
     if (a === 'roster') { go('roster'); Roster.openDay(v && v.target && v.type === 'work' ? v.target.key : P.date); return; }
     if (!P.key) return;
     const t = () => dayEdit(P.key); // 손대는 순간 그 날짜 상태를 만든다(손대지 않은 날은 저장하지 않음)
-    const done = () => { save(); renderToday(); };
+    const done = () => { save(); savePlan(); renderToday(); };
     if (a === 'mode') { t().mode = b.dataset.k; done(); }
     else if (a === 'eat') { t().eat = b.dataset.k === '1'; done(); }
     else if (a === 'rest') { t().rest = b.dataset.k === '1'; done(); }
     else if (a === 'meal') timeSheet({ title: '자기 전 밥', val: v.meal, presets: PRESET_T, max: 240, onChange: x => { t().meal = x; done(); } });
     else if (a === 'dur') { const k = v.tasks[i]; timeSheet({ title: k.n + ' 시간', val: k.m, presets: PRESET_T, onChange: x => { t().tasks[i].m = x; done(); } }); }
-    else if (a === 'del') { const d = t(); d.removed.push(d.tasks.splice(i, 1)[0]); done(); }
-    else if (a === 'back') { const d = t(); d.tasks.push(Object.assign(d.removed.splice(i, 1)[0], { done: false })); fresh = { page: P.i, idx: d.tasks.length - 1 }; done(); }
-    else if (a === 'tpl') { const d = t(), k = S.tpl[i]; d.tasks.push({ n: k.n, m: k.m, done: false }); fresh = { page: P.i, idx: d.tasks.length - 1 }; done(); }
+    else if (a === 'del') { const it = t().tasks[i]; if (it) removeItem(P.key, it.n); done(); }
+    else if (a === 'back') { const d = t(), it = d.removed[i]; if (it && addItem(P.key, it)) { d.removed.splice(i, 1); fresh = { page: P.i, idx: d.tasks.length - 1 }; } done(); }
+    else if (a === 'tpl') { const k = S.tpl[i]; if (addItem(P.key, { n: k.n, m: k.m })) fresh = { page: P.i, idx: S.days[P.key].tasks.length - 1 }; done(); }
     else if (a === 'add') addTaskSheet(P);
     else if (a === 'wake') timeSheet({ title: '일어날 시간', val: v.wakeClock, presets: WAKES, step: 10, wrap: true, show: m => fmt(m), onChange: x => { t().wake = x; done(); } });
   });
@@ -445,7 +522,7 @@
     const T = { A: [6, 14], B: [14, 22], C: [22, 30] }, OTH = C.OT_MIN / 60, f = h => fmt(Math.round(h * 60));
     const keyOf = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const monthOf = k => MONTHS.findIndex(([y, m]) => k.startsWith(keyOf(y, m, 1).slice(0, 8)));
-    let mode = 'ot', brush = 'B', cur = null, mi = 0, built = false, todayKey = '';
+    let mode = 'ot', brush = 'B', cur = null, mi = 0, built = false, todayKey = '', pendingM = null, pendingMUntil = 0;
     let fk, fs, fn;
 
     function build() {
@@ -459,10 +536,13 @@
         <div class="otlist glass a4"><div class="label" data-r="otlabel"></div><div data-r="otlist"></div></div>`;
       const track = r('track');
       let st;
-      track.addEventListener('scroll', () => {
-        clearTimeout(st);
-        st = setTimeout(() => { const i = Math.round(track.scrollLeft / track.clientWidth); if (i !== mi && i >= 0 && i < MONTHS.length) { mi = i; drawSide(); } }, 80);
-      }, { passive: true });
+      // QA-007(v12): 달 번호는 스크롤이 멈춘 뒤 반올림한 값 한 곳에서만 정하고, 점은 drawSide에서 매번 다시 그린다
+      const settle = () => {
+        const w = track.clientWidth, i = w ? clamp(Math.round(track.scrollLeft / w), 0, MONTHS.length - 1) : mi;
+        if (pendingM != null && i !== pendingM && Date.now() < pendingMUntil) { st = setTimeout(settle, Math.max(30, pendingMUntil - Date.now())); return; }
+        pendingM = null; mi = i; drawSide();
+      };
+      track.addEventListener('scroll', () => { clearTimeout(st); st = setTimeout(settle, 80); }, { passive: true });
       el.addEventListener('click', onClick);
       built = true;
     }
@@ -483,7 +563,7 @@
       r('title').textContent = `${m + 1}월 근무표`;
       r('count').textContent = `${y} · OT ${ks.length}일`;
       r('otlabel').textContent = `${m + 1}월 OT`;
-      $$('[data-r="dots"] i', el).forEach((x, i) => x.classList.toggle('on', i === mi));
+      r('dots').innerHTML = MONTHS.map((_, i) => `<i data-i="${i}"${i === mi ? ' class="on"' : ''}></i>`).join('');
       const pn = r('track').children[mi]; if (pn) r('track').style.height = pn.offsetHeight + 'px';
       r('prev').disabled = mi === 0; r('next').disabled = mi === MONTHS.length - 1;
       $$('[data-r="mode"] button', el).forEach(b => b.classList.toggle('on', b.dataset.m === mode));
@@ -500,10 +580,11 @@
     }
     function drawAll() { MONTHS.forEach((_, i) => drawMonth(i)); drawSide(); }
     function goMonth(i, smooth = true) {
-      mi = clamp(i, 0, MONTHS.length - 1);
-      const tr = r('track');
-      tr.scrollTo({ left: mi * tr.clientWidth, behavior: smooth && !reduce ? 'smooth' : 'auto' });
-      drawSide();
+      i = clamp(i, 0, MONTHS.length - 1);
+      const tr = r('track'), w = tr.clientWidth;
+      if (!smooth || reduce || !w || Math.abs(tr.scrollLeft - i * w) < 1) { pendingM = null; mi = i; tr.scrollTo({ left: i * w, behavior: 'auto' }); drawSide(); return; }
+      pendingM = i; pendingMUntil = Date.now() + 1500; // 목표 달에 닿으면 settle이 번호·점을 정한다
+      tr.scrollTo({ left: i * w, behavior: 'smooth' });
     }
     function flash(sel) { $$(sel, el).forEach(c => { c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }); }
 
@@ -581,8 +662,8 @@
       const b = e.target.closest('button,[data-i]'); if (!b) return;
       if (b.dataset.m) { mode = b.dataset.m; closeSheet(); cur = null; drawAll(); }
       else if (b.dataset.brush) { brush = b.dataset.brush; drawSide(); }
-      else if (b.dataset.r === 'prev') goMonth(mi - 1);
-      else if (b.dataset.r === 'next') goMonth(mi + 1);
+      else if (b.dataset.r === 'prev') goMonth((pendingM != null ? pendingM : mi) - 1);
+      else if (b.dataset.r === 'next') goMonth((pendingM != null ? pendingM : mi) + 1);
       else if (b.dataset.r === 'fill') openFill();
       else if (b.closest('[data-r="dots"]')) goMonth(+b.dataset.i);
     }
@@ -605,7 +686,7 @@
   const tasksEl = $('#tasks');
   let freshBase = -1;
   function renderTasks() {
-    const E = S.early, M = S.move;
+    const M = S.move;
     const moves = [['bus', '시내버스', '집 → 통근버스 정류장'], ['taxi', '택시', '집 → 통근버스 정류장'], ['car', '택시 · 차', '집 ↔ 회사 · 출퇴근 같음 · OT 날'], ['ride', '퇴근버스 → 집', '퇴근버스 출발부터 집 도착까지']];
     tasksEl.innerHTML = `<div class="month a1"><h2>할 일 설정</h2></div>
       <div class="sec a2"><div class="sec-t"><span class="label">매일 기본으로 넣을 할 일</span><span class="hint">⠿ 끌어서 순서 바꾸기</span></div>
@@ -615,9 +696,6 @@
         <div class="tpls">${S.tpl.map((t, i) => `<button data-act="tpl" data-i="${i}">${esc(t.n)}<small>${dur(t.m)}</small></button>`).join('')}<button class="new" data-act="newtpl">+ 템플릿 만들기</button></div></div>
       <div class="sec a4"><div class="sec-t"><span class="label">이동 시간</span><span class="hint">통근버스 정류장·회사까지</span></div>
         <div class="glass setlist">${moves.map(([k, n, sub]) => `<div class="srow"><span class="nm2">${n}<small>${sub}</small></span><button class="tpill num hit" data-act="move" data-k="${k}">${M[k]}분</button></div>`).join('')}</div></div>
-      <div class="sec a4"><div class="sec-t"><span class="label">일찍 나가기</span><span class="hint">기상 시각도 그만큼 당겨져요</span></div>
-        <div class="glass setlist"><div class="srow"><span class="nm2">일찍 나가기<small>계산된 출발보다 이만큼 먼저 나가요</small></span><button class="tpill num hit" data-act="early">${E.m ? E.m + '분' : '안 함'}</button></div>
-        <div class="seg glass earlysc">${[['ot', 'OT로 직접 가는 날만'], ['all', '모든 날']].map(([k, l]) => `<button data-act="esc" data-k="${k}" class="${E.sc === k ? 'on' : ''}">${l}</button>`).join('')}</div></div></div>
       <div class="sec a4 themesec"><div class="sec-t"><span class="label">테마</span><span class="hint">누르면 바로 바뀌어요</span></div>
         <div class="seg glass">${THEMES.map(([k, l]) => `<button data-act="tc" data-k="${k}" class="${S.theme.c === k ? 'on' : ''}">${l}</button>`).join('')}</div>
         <div class="seg glass">${[['l', '라이트'], ['d', '다크']].map(([k, l]) => `<button data-act="td" data-k="${k}" class="${S.theme.d === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
@@ -668,21 +746,171 @@
     else if (a === 'tpl') tplSheet(i);
     else if (a === 'newtpl') tplSheet(-1);
     else if (a === 'move') { const k = b.dataset.k; timeSheet({ title: b.closest('.srow').querySelector('.nm2').firstChild.textContent + ' 이동 시간', val: S.move[k], presets: PRESET_M, max: 240, onChange: x => { S.move[k] = x; done(); } }); }
-    else if (a === 'early') timeSheet({ title: '일찍 나가기', val: S.early.m, presets: PRESET_E, min: 0, max: 180, show: x => x ? x + '분' : '안 함', onChange: x => { S.early.m = x; done(); } });
-    else if (a === 'esc') { S.early.sc = b.dataset.k; done(); }
     else if (a === 'tc') { S.theme.c = b.dataset.k; applyTheme(); done(); }
     else if (a === 'td') { S.theme.d = b.dataset.k; applyTheme(); done(); }
   });
 
+  /* ───────── ② 주간 (v12, spec 7-1장) ─────────
+     한 주(2칸 × 4줄, 마지막 칸 메모) / 하루(요일 띠 + 고른 날). 시간은 표시하지 않는다. 새 화면 없이 시트 하나로 추가·지우기·메모 */
+  const Week = (function () {
+    const el = $('#week');
+    let wk0 = null, sel = null, seenDay = null;
+    const tday = () => Math.floor(nowAbs() / 1440);
+    const K = d => C.dayToKey(d);
+    const limits = () => [C.weekStart(tday() - 13), C.weekStart(C.keyToDay(C.RANGE_END))];
+    const SNAME = { A: 'A조', B: 'B조', C: 'C조', off: '휴무' };
+    function badge(k) {
+      const r = S.roster[k]; if (!r) return '';
+      return `<span class="sb ${r.s}">${SNAME[r.s] || r.s}</span>` + (r.ot && r.s !== 'off' ? `<span class="sb ot">${r.ot === 'pre' ? '전OT' : '후OT'}</span>` : '');
+    }
+    function summary(mon) {
+      const n = { A: 0, B: 0, C: 0, off: 0 };
+      for (let i = 0; i < 7; i++) { const r = S.roster[K(mon + i)]; if (r && n[r.s] != null) n[r.s]++; }
+      return ['A', 'B', 'C', 'off'].filter(s => n[s]).map(s => `${SNAME[s]} ${n[s]}일`).join(' · ');
+    }
+    const md2 = k => { const [, m, d] = k.split('-').map(Number); return `${m}/${d}`; };
+    function itemHTML(k, x, big) {
+      return `<div class="item${x.done ? ' done' : ''}${x.carried ? ' carried' : ''}"><button class="ib hit" data-act="chk" data-k="${k}" data-n="${esc(x.n)}"${x.carried ? ' disabled' : ''}><span class="cb"></span><span class="nm">${esc(x.n)}</span>${x.rule ? '<span class="rep" aria-label="매주 반복">↻</span>' : ''}${x.carried ? '<small>→ 오늘</small>' : ''}</button>${big && !x.carried ? `<button class="x hit" data-act="wdel" data-k="${k}" data-n="${esc(x.n)}" aria-label="빼기">×</button>` : ''}</div>`;
+    }
+    function cellHTML(d, big) {
+      const k = K(d), items = C.weekItems(ST(), k), past = d < tday();
+      return `<div class="dc glass${big ? ' focus' : ''}${d === tday() ? ' tdy' : ''}" data-k="${k}"><div class="dhd"><span class="d">${dow(k)} <small>${md2(k)}</small></span>${badge(k)}</div>
+        <div class="items">${items.map(x => itemHTML(k, x, big)).join('')}</div>${past ? '' : `<button class="addi" data-act="add" data-k="${k}">+ 추가</button>`}</div>`;
+    }
+    function render() {
+      const t = tday();
+      if (seenDay !== t) { seenDay = t; wk0 = C.weekStart(t); sel = null; }
+      const [lo, hi] = limits(); wk0 = clamp(wk0, lo, hi);
+      if (sel == null || sel < wk0 || sel > wk0 + 6) sel = t >= wk0 && t <= wk0 + 6 ? t : wk0;
+      const view = PL.ui.week, mk = K(wk0), carry = wk0 === C.weekStart(t) ? C.carryList(ST(), t) : [];
+      let h = `<div class="month a1"><h2 data-wtitle>${C.weekLabel(wk0)}</h2><div class="mnav"><button class="hit" data-act="prev" aria-label="이전 주"${wk0 <= lo ? ' disabled' : ''}>‹</button><button class="hit" data-act="next" aria-label="다음 주"${wk0 >= hi ? ' disabled' : ''}>›</button></div></div>
+        <p class="rhint a2 num" data-wsum>${md2(mk)}~${md2(K(wk0 + 6))}${summary(wk0) ? ' · ' + summary(wk0) : ''}</p>`;
+      if (carry.length) h += `<div class="carry a2" data-carry><span>어제 못 한 일 <b>${carry.length}개</b></span><button data-act="carry">오늘로 가져오기</button></div>`;
+      h += `<div class="seg glass vseg a2" data-wview>${[['week', '한 주'], ['day', '하루']].map(([k, l]) => `<button data-act="view" data-k="${k}" class="${view === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+      if (view === 'week') {
+        let g = '';
+        for (let i = 0; i < 7; i++) g += cellHTML(wk0 + i, false);
+        const memo = PL.memos[mk] || '';
+        g += `<button class="dc glass memo" data-act="memo"><span class="label">이번 주 메모</span><p>${memo ? esc(memo) : '<span class="hint">눌러서 적기</span>'}</p></button>`;
+        h += `<div class="g2 a3" data-wgrid>${g}</div>`;
+      } else {
+        let s = '';
+        for (let i = 0; i < 7; i++) {
+          const d = wk0 + i, k = K(d), it = C.weekItems(ST(), k), r = S.roster[k];
+          s += `<button class="sd${d === sel ? ' sel' : ''}${d === t ? ' tdy' : ''}" data-act="sel" data-d="${d}"><span class="w">${dow(k)}</span><span class="n2 num">${Number(k.slice(8))}</span><span class="st ${r ? r.s : ''}"></span><span class="pg num">${it.filter(x => x.done).length}/${it.length}</span></button>`;
+        }
+        h += `<div class="strip a3" data-wstrip>${s}</div>${cellHTML(sel, true)}`;
+      }
+      el.innerHTML = h;
+    }
+    const done = () => { save(); savePlan(); render(); };
+
+    /* 「+ 추가」 시트(W3): 이름 → 넣을 날 → 요일 → 매주 반복 → 추가. 같은 이름이 있는 날·지난 날은 건너뜀 */
+    function addSheet(k0) {
+      const d0 = C.keyToDay(k0), mon = C.weekStart(d0), t = tday();
+      const days = Array.from({ length: 7 }, (_, i) => mon + i), future = days.filter(d => d >= t);
+      const chips = [...new Map([...S.tpl, ...S.base].map(x => [x.n, x])).values()];
+      let pick = -1, typed = '', custom = false, mode = 'one', picked = new Set([d0]), quick = null, rep = false;
+      const name = () => (custom ? typed.trim() : pick >= 0 ? chips[pick].n : '').slice(0, NAME_MAX);
+      const mins = () => (!custom && pick >= 0 ? chips[pick].m : undefined); // 칩을 고르면 그 시간, 직접 입력은 시간 없음
+      const targets = () => (mode === 'one' ? [d0] : mode === 'all' ? future : future.filter(d => picked.has(d)));
+      const will = () => { const n = name(); return n ? targets().filter(d => !hasName(K(d), n)) : []; };
+      const isWork = d => { const r = S.roster[K(d)]; return !!r && r.s !== 'off'; };
+      const draw = () => {
+        const n = name(), w = will(), tg = targets();
+        const label = !n ? '이름을 골라 주세요' : !tg.length ? '날을 골라 주세요' : !w.length ? '이미 모두 있어요' : `${w.length}일에 추가${rep ? ' · 매주 반복' : ''}`;
+        setSheet(`<h3>할 일 추가 · ${C.weekLabel(mon)}</h3>
+          <span class="label">이름</span>
+          <div class="opts" data-chips>${chips.map((x, i) => `<button data-c="${i}" class="${!custom && pick === i ? 'on' : ''}">${esc(x.n)}</button>`).join('')}<button data-custom class="${custom ? 'on' : ''}">직접 입력</button></div>
+          ${custom ? `<input class="nmin" data-typed maxlength="${NAME_MAX}" placeholder="예: SKCT 1회" value="${esc(typed)}">` : ''}
+          <span class="label" style="margin-top:12px">넣을 날</span>
+          <div class="opts f3" data-mode>${[['one', '이 날만'], ['all', '일주일 전부'], ['pick', '요일 고르기']].map(([k, l]) => `<button data-mode="${k}" class="${mode === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+          <div class="opts f3" data-quick><button data-quick="work" class="${quick === 'work' ? 'on' : ''}">근무일만</button><button data-quick="off" class="${quick === 'off' ? 'on' : ''}">휴무일만</button></div>
+          <div class="days7" data-days>${days.map(d => { const k = K(d), r = S.roster[k], on = tg.includes(d); return `<button data-d="${d}" class="${on ? 'on' : ''}"${d < t ? ' disabled' : ''}>${dow(k)}<small>${r ? (r.s === 'off' ? '휴무' : r.s) : ''}</small></button>`; }).join('')}</div>
+          <button class="rowopt" data-rep><span>매주 반복 ↻<small>다음 주에도 ${mode === 'all' ? '매일' : quick === 'work' ? '근무일마다' : quick === 'off' ? '휴무일마다' : '같은 요일에'} 들어가요</small></span><span class="tgl${rep ? '' : ' no'}"></span></button>
+          <button class="go" data-go${n && w.length ? '' : ' disabled'}>${label}</button><button class="close" data-x>닫기</button>`);
+        const inp = $('[data-typed]', sheet);
+        if (inp) inp.oninput = () => { typed = inp.value; const g = $('[data-go]', sheet), ww = will(), nn = name(); g.disabled = !(nn && ww.length); g.textContent = !nn ? '이름을 골라 주세요' : !ww.length ? (targets().length ? '이미 모두 있어요' : '날을 골라 주세요') : `${ww.length}일에 추가${rep ? ' · 매주 반복' : ''}`; };
+      };
+      openSheet('', e => {
+        const b = e.target.closest('button'); if (!b || b.disabled) return;
+        if (b.dataset.c != null) { custom = false; pick = +b.dataset.c; draw(); }
+        else if (b.hasAttribute('data-custom')) { custom = true; pick = -1; draw(); const i = $('[data-typed]', sheet); if (i) i.focus(); }
+        else if (b.dataset.mode) { mode = b.dataset.mode; quick = null; if (mode === 'pick') picked = new Set(future.filter(d => d === d0)); draw(); }
+        else if (b.dataset.quick) { quick = quick === b.dataset.quick ? null : b.dataset.quick; mode = 'pick'; picked = new Set(quick ? future.filter(d => (quick === 'work') === isWork(d)) : []); draw(); }
+        else if (b.dataset.d != null) { const d = +b.dataset.d; if (mode !== 'pick') { picked = new Set(targets()); mode = 'pick'; } quick = null; picked.has(d) ? picked.delete(d) : picked.add(d); draw(); }
+        else if (b.hasAttribute('data-rep')) { rep = !rep; draw(); }
+        else if (b.hasAttribute('data-go')) {
+          const n = name(), m = mins(), w = will(); if (!n || !w.length) return;
+          if (rep) {
+            // 반복은 규칙으로 저장(날짜마다 복사하지 않음). 근무일만·휴무일만은 근무표 기준 규칙, 오늘 이전에는 넣지 않음
+            const tg = targets(), kind = quick || (mode === 'all' ? 'daily' : 'wd');
+            // 시작일: 매일·근무표 기준 규칙은 오늘(미래 주면 그 주 월요일)부터, 요일 규칙은 고른 첫날부터
+            const from = K(kind === 'wd' ? Math.max(t, Math.min(...tg)) : Math.max(t, mon));
+            PL.rules.push({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), n, m, kind, wd: kind === 'wd' ? [...new Set(tg.map(C.weekday))].sort() : [], from, until: null });
+          } else w.forEach(d => addItem(K(d), { n, m }, true));
+          closeSheet(); done(); if (typeof renderToday === 'function') renderToday(false);
+        } else if (b.hasAttribute('data-x')) closeSheet();
+      });
+      draw();
+    }
+    /* 반복 항목 지우기: 이 날만 / 앞으로 전부 */
+    function delSheet(k, n) {
+      const rid = (PL.days[k] && PL.days[k].r[n]) || (C.dayItems(ST(), k).find(x => x.n === n) || {}).rule;
+      if (!rid) { removeItem(k, n); done(); return; }
+      openSheet(`<h3>「${esc(n)}」 빼기</h3><span class="label">매주 반복하는 할 일이에요</span>
+        <div class="btns"><button data-one>이 날만<small>${md(k)}</small></button><button data-all>앞으로 전부<small>${md(k)}부터</small></button></div><button class="close" data-x>취소</button>`, e => {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.hasAttribute('data-one')) { removeItem(k, n); const m = pmark(k); if (!m.skip.includes(rid)) m.skip.push(rid); closeSheet(); done(); }
+        else if (b.hasAttribute('data-all')) {
+          const ru = PL.rules.find(r => r.id === rid);
+          if (ru) { ru.until = K(C.keyToDay(k) - 1); if (ru.until < ru.from) PL.rules.splice(PL.rules.indexOf(ru), 1); }
+          // 그날 이후 저장된 날짜에서 그 반복 항목을 지운다(지난 날은 그대로)
+          Object.keys(S.days).forEach(dk => { if (dk >= k && PL.days[dk] && PL.days[dk].r[n] === rid) { const t = S.days[dk], i = t.tasks.findIndex(x => x.n === n); if (i >= 0) t.tasks.splice(i, 1); unmark(dk, n); } });
+          closeSheet(); done();
+        } else if (b.hasAttribute('data-x')) closeSheet();
+      });
+    }
+    function memoSheet() {
+      const mk = K(wk0);
+      openSheet(`<h3>이번 주 메모 · ${C.weekLabel(wk0)}</h3><textarea class="nmin memoin" data-memo maxlength="300" placeholder="예: 12월부터 ADSP 준비">${esc(PL.memos[mk] || '')}</textarea>
+        <button class="go" data-save>저장</button><button class="close" data-x>닫기</button>`, e => {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.hasAttribute('data-save')) { const v = $('[data-memo]', sheet).value.trim(); if (v) PL.memos[mk] = v; else delete PL.memos[mk]; closeSheet(); done(); }
+        else if (b.hasAttribute('data-x')) closeSheet();
+      });
+    }
+    /* 이월: 누를 때만. 어제 못 한 주간 항목을 오늘 끝에 복사하고 어제 칸에 「→ 오늘」 */
+    function carry() {
+      const t = tday(), tk = K(t), yk = K(t - 1);
+      C.carryList(ST(), t).forEach(x => { if (addItem(tk, { n: x.n, m: x.m }, true)) pmark(yk).cf[x.n] = tk; });
+      done();
+    }
+    el.addEventListener('click', e => {
+      const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+      const a = b.dataset.act, [lo, hi] = limits();
+      if (a === 'prev') { wk0 = Math.max(lo, wk0 - 7); sel = null; render(); }
+      else if (a === 'next') { wk0 = Math.min(hi, wk0 + 7); sel = null; render(); }
+      else if (a === 'view') { PL.ui.week = b.dataset.k; savePlan(); render(); }
+      else if (a === 'sel') { sel = +b.dataset.d; render(); }
+      else if (a === 'chk') { const k = b.dataset.k, n = b.dataset.n, it = dayEdit(k).tasks.find(x => x.n === n); if (it) it.done = !it.done; done(); }
+      else if (a === 'add') addSheet(b.dataset.k);
+      else if (a === 'wdel') delSheet(b.dataset.k, b.dataset.n);
+      else if (a === 'memo') memoSheet();
+      else if (a === 'carry') carry();
+    });
+    return { render };
+  })();
+
   /* ───────── 탭 · 패럴랙스 · 시계 ───────── */
   const app = $('#app');
-  const screens = { today: todayEl, roster: $('#roster'), tasks: tasksEl };
+  const screens = { today: todayEl, week: $('#week'), roster: $('#roster'), tasks: tasksEl };
   function enter(sc) { sc.classList.add('enter'); clearTimeout(sc._t); sc._t = setTimeout(() => sc.classList.remove('enter'), 1100); }
   function go(tab) {
     closeSheet();
     app.dataset.tab = tab;
     $$('.tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-    if (tab === 'today') renderToday(); else if (tab === 'roster') Roster.render(); else renderTasks();
+    if (tab === 'today') renderToday(); else if (tab === 'week') Week.render(); else if (tab === 'roster') Roster.render(); else renderTasks();
     enter(screens[tab]);
     app.style.setProperty('--sy', (tab === 'today' ? pageEls[curPage] : screens[tab]).scrollTop);
   }
@@ -702,7 +930,8 @@
     if (document.hidden || dragging) return;
     const d = Math.floor(nowAbs() / 1440);
     if (app.dataset.tab === 'today') renderToday(true);
-    if (d !== lastDay) { lastDay = d; if (C.pruneDays(S, nowAbs())) save(); curPage = 0; dtrack.scrollLeft = 0; Roster.render(); if (app.dataset.tab === 'today') renderToday(false); }
+    else if (app.dataset.tab === 'week' && d !== lastDay && !sheetOpen()) Week.render(); // 주간은 날짜가 바뀔 때만 다시 그림(누르는 중에 화면이 바뀌지 않게)
+    if (d !== lastDay) { lastDay = d; if (C.pruneDays(S, nowAbs())) save(); if (C.prunePlan(PL, nowAbs())) savePlan(); curPage = 0; dtrack.scrollLeft = 0; Roster.render(); if (app.dataset.tab === 'today') renderToday(false); }
   }
   setInterval(tick, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
