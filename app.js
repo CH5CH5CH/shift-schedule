@@ -1022,7 +1022,9 @@
       let armed = false;
       const delLabel = () => `앞으로 「${edit.n}」 모두 지우기`;
       const delCount = () => { let n = 0; for (let d = d0, end = C.keyToDay(C.RANGE_END); d <= end; d++) n += C.dayItems(ST(), K(d)).filter(x => x.n === edit.n).length; return n; };
-      const arm = on => { armed = on; const x = $('[data-delall]', sheet); if (x) x.textContent = on ? `${delCount()}개 지우기 · 한 번 더 누르기` : delLabel(); };
+      // v17: 지울 항목에 반복이 섞여 있으면(그날부터 해당하는 반복 규칙이 있으면) 개수 대신 「앞으로 전부 지우기」 — 반복은 근무표 끝까지 세어 개수가 커 보이므로
+      const hasRep = () => { const end = C.keyToDay(C.RANGE_END); return PL.rules.some(r => { if (r.n !== edit.n) return false; for (let d = d0; d <= end; d++) if (C.ruleOn(S, r, d)) return true; return false; }); };
+      const arm = on => { armed = on; const x = $('[data-delall]', sheet); if (x) x.textContent = on ? (hasRep() ? '앞으로 전부 지우기 · 한 번 더 누르기' : `${delCount()}개 지우기 · 한 번 더 누르기`) : delLabel(); };
       const days = Array.from({ length: 7 }, (_, i) => mon + i), future = days.filter(d => d >= t);
       const isWork = d => { const r = S.roster[K(d)]; return !!r && r.s !== 'off'; };
       let typed = '', mode = 'one', picked = new Set([d0]), quick = null, rep = false;

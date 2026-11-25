@@ -399,3 +399,7 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
 .tt .dropline{position:absolute;left:36px;right:14px;height:2px;border-radius:2px;background:var(--accent);pointer-events:none;z-index:3}
 .tt>:has(+.dropline:last-child)::before{bottom:50%} /* 끄는 동안 붙는 줄 때문에 마지막 줄의 시간선이 아래로 늘어나지 않게 */
 .dupnote[data-ttnote]{text-shadow:var(--halo)} /* v14: 시간표 아래 끌기 막음 안내는 페이지 바탕 위라 halo(글자색 그대로, 사용자 결정 11/24) */
+/* v17 QA-011 (b): 스크롤 영역을 페이지 점 위(화면 아래에서 96px + tab-b)에서 끝나게 — 내용이 페이지 점·유리 탭 막대 뒤와 그 아래 여백 띠로 지나가지 않음.
+   끝까지 스크롤했을 때 마지막 줄 위치(화면 아래에서 120px + tab-b)는 그대로. mask를 쓰지 않아 유리 칸 모양·흐림은 그대로(v16 시험 결과) */
+.screen{height:calc(100% - 96px - var(--tab-b));padding-bottom:24px}
+.addrow{text-shadow:var(--halo)} /* v17: 할 일 탭 맨 아래에서 달 위에 놓이면(11/24 20:30 등) 4.5:1 미만 → 이 글자에만 halo, 글자색 그대로(사용자 결정 11/25) */
