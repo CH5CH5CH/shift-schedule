@@ -90,9 +90,28 @@
   function homeOf(st, d, s, ot) {
     const k = dayToKey(d), base = homeArrival(d, s, ot, st.move), fx = homeFix(st, k);
     const after = dayItems(st, k).filter(x => x.bh), sum = sumM(after);
-    return { key: k, base, sum, fixed: fx != null, home: fx != null ? d * 1440 + fx : base + sum };
+    return Object.assign({ key: k, base, sum, fixed: fx != null, home: fx != null ? d * 1440 + fx : base + sum }, afterStart(st, d, s, ot, base));
+  }
+  /* QA-012(v18): 퇴근 후 할 일을 그리기 시작하는 시각. 집 도착 계산(기본 + 합계)은 그대로이고 표시만.
+     실제 순서: 퇴근버스 → 정류장 도착 → (정류장 옆 헬스장 등) → 정류장에서 집 → 집 도착
+     - 후OT 날: 회사에서 택시·차로 바로 → 정류장 없음, 회사를 나선 시각(OT 끝)부터
+     - 그날 수단이 「차로 회사」: 정류장 없음, 회사를 나선 시각(퇴근버스 시각)부터
+     - 시내버스·택시: 정류장 도착 = 기본 집 도착 − 정류장→집(그날 수단: 시내버스 move.bus · 택시 move.taxi). 퇴근버스 출발보다 앞서지 않게 */
+  function afterStart(st, d, s, ot, base) {
+    const S = SHIFTS[s], b = d * 1440;
+    if (ot === 'post') return { start: b + S.end + OT_MIN, at: 'company' };
+    const t = dayOf(st, dayToKey(d)), opts = depOptions(d, s, ot, st.move, st.early);
+    const mode = (opts.find(x => x.k === (t && t.mode)) || opts.find(x => x.k === defaultMode(s, ot))).k;
+    if (mode === 'car') return { start: b + S.back, at: 'company' };
+    const leg = mode === 'taxi' ? st.move.taxi : st.move.bus;
+    return { start: Math.max(b + S.back, base - leg), at: 'stop' };
   }
   const preOf = tasks => tasks.filter(x => !x.bh); // 출발 전 할 일(근무일 계산). 휴무 화면은 bh 구분 없이 전부
+  /* v18 낮잠: 이름이 「낮잠」인 할 일(사용자 결정 11/25 — 새 칸 없음, 옛 버전도 보통 할 일로 읽어 숫자가 같음).
+     일어나기 계산에는 다른 할 일처럼 들어가고, 화면은 큰 숫자(본잠) 아래 「+ 낮잠 N · 합계 M」에만 씀 */
+  const NAP = '낮잠';
+  const isNap = x => !!x && x.n === NAP;
+  const napOf = tasks => sumM(tasks.filter(isNap));
   function workStart(day, s, ot) { return day * 1440 + SHIFTS[s].start - (ot === 'pre' ? OT_MIN : 0); }
   function workEnd(day, s, ot) { return day * 1440 + SHIFTS[s].end + (ot === 'post' ? OT_MIN : 0); }
 
@@ -213,7 +232,7 @@
     const tasks = dayItems(st, key);
     const total = sumM(offScreen ? tasks : preOf(tasks)); // v14: 근무일은 출발 전 할 일만 합계
     const meal = t ? t.meal : 60, eat = t ? !!t.eat : false;
-    const base = { key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T, prog, tasks };
+    const base = { key, now, today, todayOff, offN: todayOff ? offNth(st, today) : 0, total, target: T, prog, tasks, nap: napOf(offScreen ? tasks : preOf(tasks)) };
 
     if (offScreen) {
       const y = st.roster[dayToKey(today - 1)];
@@ -273,7 +292,7 @@
     const p = st.roster[dayToKey(d - 1)], prevC = !!p && p.s === 'C';
     const top = prevC ? homeOf(st, d - 1, 'C', p.ot) : null;
     const home = top ? top.home : null;
-    common.top = top;
+    common.top = top; common.nap = napOf(r.s === 'off' ? tasks : preOf(tasks));
     if (r.s === 'off') {
       const wakeClock = t && t.wake != null ? t.wake : (home != null ? 15 * 60 : 10 * 60);
       let wake;
@@ -331,7 +350,7 @@
   const api = {
     SHIFTS, OT_MIN, RANGE_START, RANGE_END, ANCHOR, ORDER, CYCLE,
     keyToDay, dayToKey, nowAbs, fmt, dur, fillRoster, defaultRoster, earlyFor, defaultMode,
-    depOptions, homeArrival, homeFix, homeOf, preOf, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
+    depOptions, homeArrival, homeFix, homeOf, afterStart, preOf, NAP, isNap, napOf, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
     dayOf, sumM, nextWork, computeDay, migrateToday, pruneDays,
     PLAN_WK, planDefault, weekday, weekStart, weekLabel, ruleOn, dayItems, weekItems, carryList, prunePlan,
   };

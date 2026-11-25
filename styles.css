@@ -403,3 +403,12 @@ button.pill.wake::after{content:"눌러서 바꾸기";position:absolute;right:12
    끝까지 스크롤했을 때 마지막 줄 위치(화면 아래에서 120px + tab-b)는 그대로. mask를 쓰지 않아 유리 칸 모양·흐림은 그대로(v16 시험 결과) */
 .screen{height:calc(100% - 96px - var(--tab-b));padding-bottom:24px}
 .addrow{text-shadow:var(--halo)} /* v17: 할 일 탭 맨 아래에서 달 위에 놓이면(11/24 20:30 등) 4.5:1 미만 → 이 글자에만 halo, 글자색 그대로(사용자 결정 11/25) */
+/* v18 낮잠: 출발 전 칸의 낮잠 줄은 잠 막대의 잠 칸과 같은 색(accent 바탕 + on 글자, 블러시는 같은 그러데이션). 새 색 없음. 시간 알약은 칩 바탕(chip2) */
+.tk.nap .card{background:var(--accent);color:var(--on)}
+.tk.nap .nm b,.tk.nap .rng,.tk.nap .grip{color:var(--on);text-shadow:none}
+.tk.nap .tpill{background:var(--chip2)}
+:root[data-theme=p1l] .tk.nap .card{background:linear-gradient(160deg,#F3C9C9,#E9B2B4)}
+:root[data-theme=p1d] .tk.nap .card{background:linear-gradient(160deg,#EDBCBD,#E3A7AA)}
+.head .shift{text-shadow:var(--halo)} /* v18: 3일 뒤 이후 페이지 「M월 D일 C조 · HH:MM 출근」이 길어 끝이 달 위(다크 3.65~3.95) → 머리 줄 근무조에 halo, 글자색 그대로(사용자 결정 11/25) */
+.head .shift .otbadge{text-shadow:none} /* 위 halo가 노란 OT 배지 글자에 상속되지 않게(배지는 노란 바탕 + 진한 글자 — halo 불필요) */
+.big.short{text-shadow:var(--halo)} /* v18: 잘 수 있는 시간이 짧을 때(ink 글자) 유리 칸이 달 위면 다크 3.65~4.21(12/9 09:00) → halo, 글자색 그대로(사용자 결정 11/25 — 새 미달은 halo → 칩 바탕) */

@@ -380,6 +380,7 @@
     const toBh = z !== 'pre', all = v.type === 'off' && z === 'pre';
     const src = dayEdit(fk).tasks, it = src[+el.dataset.i]; if (!it) return;
     const inZone = x => all || !!x.bh === toBh;
+    if (C.isNap(it) && toBh) { ttNote = { page: P.i, text: '낮잠은 출발 전 칸에만 둘 수 있어요' }; renderToday(false); return; } // v18
     if (fk !== tk || !!it.bh !== toBh) {
       if (dayEdit(tk).tasks.some(x => x !== it && x.n === it.n && !!x.bh === toBh)) {
         ttNote = { page: P.i, text: `${z === 'pre' ? '출발 전' : '퇴근 후'} 할 일에 「${it.n}」이 이미 있어요` }; renderToday(false); return;
@@ -424,11 +425,11 @@
     let t = from;
     return tasks.map((k, i) => {
       if (pick && !pick(k)) return '';
-      const at = ` data-i="${i}" data-z="${z}"${lk ? ` data-k="${lk}"` : ''}`;
+      const at = ` data-i="${i}" data-z="${z}"${lk ? ` data-k="${lk}"` : ''}`, nap = C.isNap(k) && z === 'pre' ? ' nap' : ''; // v18 낮잠은 잠 색
       if (!Number.isFinite(k.m)) // v13: 시간 없는 항목은 「시간 정하기」 점선 줄 — 정하기 전에는 0분(계산 그대로), 누르면 시간 시트
-        return `<div class="tk unset${i === freshIdx ? ' new' : ''}"${at}><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b></div><div class="ctl"><button class="tpill set hit" data-act="dur" data-i="${i}">시간 정하기</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
+        return `<div class="tk unset${nap}${i === freshIdx ? ' new' : ''}"${at}><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b></div><div class="ctl"><button class="tpill set hit" data-act="dur" data-i="${i}">시간 정하기</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       const m = k.m;
-      const h = `<div class="tk${i === freshIdx ? ' new' : ''}"${at}><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
+      const h = `<div class="tk${nap}${i === freshIdx ? ' new' : ''}"${at}><span class="tm num">${fmt(t)}</span><div class="card">${GRIP}<div class="nm"><b>${esc(k.n)}</b><span class="rng num">~${fmt(t + m)}까지</span></div><div class="ctl"><button class="tpill num hit" data-act="dur" data-i="${i}">${dur(m)}</button><button class="x hit" data-act="del" data-i="${i}" aria-label="빼기">×</button></div></div></div>`;
       t += m; return h;
     }).join('');
   }
@@ -438,7 +439,13 @@
     return ev(cls, fmt(Hm.home), `집 도착<small>${sub}${note}</small>`, `<button class="tpill num hit" data-act="home" data-k="${Hm.key}">${fmt(Hm.home)}</button>`, ` data-za="${za}"`);
   }
   /* 퇴근 후 칸: 그 근무 날짜 목록의 bh 할 일. 시각은 기본 집 도착부터 차례로(합계만큼 집 도착이 늦어짐) */
-  const afterHTML = (Hm, z, list) => tasksHTML(list || C.dayItems(ST(), Hm.key), Hm.base, -1, z, z === 'top' ? Hm.key : null, x => x.bh);
+  /* 퇴근 후 칸(v14, QA-012 v18): 할 일은 정류장 도착(후OT·차로 회사 날은 회사를 나선 시각)부터 차례로. 집 도착은 계산 그대로(기본 + 합계, 직접 고치면 고친 값).
+     칸에 항목이 있을 때만 시작 지점 줄 하나(기존 줄 모양). 후OT 날 맨 아래 칸은 바로 위 「후OT 끝」 줄이 같은 시각이라 생략 */
+  function afterHTML(Hm, z, list, noRow) {
+    const items = list || C.dayItems(ST(), Hm.key);
+    const row = !noRow && items.some(x => x.bh) ? ev('', fmt(Hm.start), Hm.at === 'stop' ? '정류장 도착<small>퇴근버스</small>' : '회사에서 출발', '', ' data-zs') : '';
+    return row + tasksHTML(items, Hm.start, -1, z, z === 'top' ? Hm.key : null, x => x.bh);
+  }
   let ttNote = null; // 끌어 놓기를 막았을 때 그 페이지 시간표 아래 한 줄(다음 그리기 때 사라짐)
   const noteHTML = P => (ttNote && ttNote.page === P.i ? `<p class="dupnote" data-ttnote>${esc(ttNote.text)}</p>` : '');
   function spareHTML(key, list) {
@@ -477,8 +484,10 @@
   function computePages() {
     const now = nowAbs(), today = Math.floor(now / 1440);
     const v0 = C.computeToday(ST(), now);
+    // v18 D안(0번·1번 겹침): 0번이 다른 날짜 근무 준비(출발 뒤, 다음 출발 24시간 전 휴무 날)면 1번부터는 그 근무 날짜의 다음 날부터 하루씩 — 같은 날짜 시간표가 두 페이지에 나오지 않게. 페이지 수 7개 그대로
+    const from = v0.type === 'work' && v0.target.key !== C.dayToKey(today) ? v0.target.day : today;
     return pageEls.map((_, i) => {
-      const d = today + i, date = C.dayToKey(d);
+      const d = i === 0 ? today : from + i, date = C.dayToKey(d);
       let vm, dup = false;
       if (i === 0) vm = v0;
       else if (v0.type === 'work' && v0.target.key === date) { vm = v0; dup = true; }
@@ -498,7 +507,7 @@
     const T = prepOf(P);
     if (T) { const g = T.day - P.d, sd = mdS(T.key);
       return `<div class="month dhead a1"><h2 class="num" data-dtitle>오늘<span class="rel"> · ${g === 1 || g === 2 ? `${REL[g]}(${sd})` : sd} 근무 준비</span></h2></div>`; }
-    return `<div class="month dhead a1"><h2 class="num" data-dtitle>${md(P.date)} (${dow(P.date)})${REL[P.i] ? `<span class="rel"> · ${REL[P.i]}</span>` : ''}</h2>${P.isToday ? '' : '<button class="golink" data-act="gotoday">오늘로</button>'}</div>`;
+    return `<div class="month dhead a1"><h2 class="num" data-dtitle>${md(P.date)} (${dow(P.date)})${REL[P.d - Math.floor(P.vm.now / 1440)] ? `<span class="rel"> · ${REL[P.d - Math.floor(P.vm.now / 1440)]}</span>` : ''}</h2>${P.isToday ? '' : '<button class="golink" data-act="gotoday">오늘로</button>'}</div>`;
   }
 
   function renderToday(animate = true) {
@@ -554,6 +563,8 @@
   dtrack.addEventListener('scroll', () => { clearTimeout(dscroll); dscroll = setTimeout(settlePage, 80); }, { passive: true });
   ddots.addEventListener('click', e => { const x = e.target.closest('i'); if (x) setPage(+x.dataset.i); });
 
+  /* v18 낮잠: 큰 숫자(본잠) 아래 「+ 낮잠 N · 합계 M」(합계 = 본잠 + 그날 낮잠). 본잠을 아직 모르는 미래 페이지는 「+ 낮잠 N」만. 낮잠 없으면 없음 */
+  const napHTML = v => (v.nap > 0 ? `<div class="label num" data-nap>+ 낮잠 ${dur(v.nap)}${v.sleep == null ? '' : ` · 합계 ${v.sleep + v.nap >= 0 ? dur(v.sleep + v.nap) : durSigned(v.sleep + v.nap)}`}</div>` : '');
   function workHTML(v, P) {
     const T = v.target, t = P.key ? S.days[P.key] : null, tasks = v.tasks, today = P.isToday;
     const otTxt = T.ot === 'pre' ? '전OT' : T.ot === 'post' ? '후OT' : '';
@@ -572,8 +583,8 @@
     const parts = [];
     if (!fromNow && v.prevC && v.eat) parts.push({ cls: 't', m: v.meal, txt: '밥' });
     parts.push({ cls: 's', m: v.sleep, txt: '잠' });
-    tasks.forEach(k => { if (!k.bh && Number.isFinite(k.m)) parts.push({ cls: 't', m: k.m, txt: k.n }); }); // v14: 출발 전 할 일만
-    h += `<div class="glass hero a2"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
+    tasks.forEach(k => { if (!k.bh && Number.isFinite(k.m)) parts.push({ cls: C.isNap(k) ? 's' : 't', m: k.m, txt: k.n }); }); // v14: 출발 전 할 일만 · v18: 낮잠은 잠 색
+    h += `<div class="glass hero a2"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}${napHTML(v)}
       <div class="pair"><div class="pill wake"><small>일어나기</small><b class="num" data-wake>${!noBed && v.sleep < 0 ? '—' : fmt(v.wake)}</b></div><div class="pill"><small>집에서 출발</small><b class="num" data-dep>${fmt(v.dep)}</b></div></div>
       ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${fromNow ? '지금 ' + fmt(v.now) : '집 도착 ' + fmt(v.home)}</span><span>출발 ${fmt(v.dep)}</span></div>`}</div>`;
     if (today && v.prevC && v.nowSleep > 0) h += `<p class="nowline label num a2" data-nowsleep>지금 자면 ${durSigned(v.nowSleep)}</p>`;
@@ -597,7 +608,7 @@
     else tt += ev('', fmt(v.start), `${T.s}조 근무 시작`);
     if (T.ot === 'post') tt += ev('ot', fmt(v.end), `<b>후OT 끝</b><small>${T.s}조 근무는 ${fmt(v.end - C.OT_MIN)}까지</small>`);
     const nextDay = Math.floor(v.homeAfter / 1440) > T.day;
-    tt += afterHTML(v.after, 'post', tasks) + homeRowHTML(v.after, `${T.ot === 'post' ? '택시·차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}`, 'post', 'home');
+    tt += afterHTML(v.after, 'post', tasks, T.ot === 'post') + homeRowHTML(v.after, `${T.ot === 'post' ? '택시·차로' : v.mode === 'car' ? '차로' : '퇴근버스로'}${nextDay ? ' · 다음 날' : ''}`, 'post', 'home'); // v18: 「차로 회사」 날은 차로 돌아옴(표시만 — 집 도착 계산은 그대로)
     h += `<div class="sec a4"><div class="sec-t"><span class="label">${today ? '오늘 시간표' : '시간표'}</span><span class="hint">⠿ 끌어서 순서 · 시간 눌러 변경</span></div>
       <div class="glass tt">${tt}</div>${noteHTML(P)}<div class="spare">${spareHTML(P.key, v.tasks)}</div></div>`;
     // v16(QA-009 후속): 다른 날짜 근무 준비를 보일 때만 그날 달력 날짜의 주간 항목 — 주간 하루 보기 카드와 같은 모양·데이터, 계산·시간표·끌기와 무관
@@ -614,8 +625,8 @@
       .map(([k, l, s]) => `<button data-act="rest" data-k="${k}" class="${+v.rest === k ? 'on' : ''}">${l}<small>${s}</small></button>`).join('')}</div></div>`;
     if (v.rest) return h;
     const noBed = v.sleep == null;
-    const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(tasks.filter(k => Number.isFinite(k.m)).map(k => ({ cls: 't', m: k.m, txt: k.n })));
-    h += `<div class="glass hero a2" style="margin-top:0"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}
+    const parts = [{ cls: 's', m: v.sleep, txt: '잠' }].concat(tasks.filter(k => Number.isFinite(k.m)).map(k => ({ cls: C.isNap(k) ? 's' : 't', m: k.m, txt: k.n })));
+    h += `<div class="glass hero a2" style="margin-top:0"><div class="label">${today ? '오늘 잘 수 있는 시간' : '잘 수 있는 시간'}</div>${noBed ? '<p class="label dwait" data-sleepwait>잘 수 있는 시간은 그날이 되면 보여요</p>' : '<div class="big num" data-sleep></div>'}${napHTML(v)}
       <div class="pair"><button class="pill wake" data-act="wake"><small>일어나기</small><b class="num" data-wake>${fmt(v.wake)}</b></button><div class="pill"><small>할 일 끝</small><b class="num" data-dep>${fmt(v.end)}</b></div></div>
       ${noBed ? '' : `<div class="bar">${barHTML(parts)}</div><div class="ticks num"><span>${v.home != null && v.bed === v.home ? '집 도착 ' + fmt(v.home) : '지금 ' + fmt(v.now)}</span><span>할 일 끝 ${fmt(v.end)}</span></div>`}</div>`;
     let tt = '';
@@ -630,7 +641,7 @@
   }
 
   function addTaskSheet(P) {
-    const names = [...new Set([...S.tpl, ...S.base].map(x => x.n))];
+    const names = [...new Set([...S.tpl, ...S.base].map(x => x.n).concat([C.NAP]))]; // v18: 「낮잠」 칩(시간은 아래 「얼마나」에서)
     const lookup = n => ([...S.tpl, ...S.base].find(x => x.n === n) || { m: 30 }).m;
     let pn = names[0] || '', pm = lookup(pn), custom = !names.length, typed = '';
     const draw = () => {
