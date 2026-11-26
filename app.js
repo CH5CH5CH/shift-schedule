@@ -204,6 +204,30 @@
   }
   const pruneOut = now => { const min = C.dayToKey(Math.floor(now / 1440) - 13); let n = 0; Object.keys(O.days).forEach(k => { if (k < min) { delete O.days[k]; n++; } }); return n; };
   if (restoreAfter() | restoreOut() | pruneHome(C.nowAbs(new Date())) | pruneOut(C.nowAbs(new Date()))) { save(); }
+  /* v20 먼슬리 저장 — 별도 키 MKEY(v19 이하가 읽지도 쓰지도 않음 — 롤백했다 돌아와도 남음). 다른 키는 바꾸지 않는다(spec 7-5)
+     events: 날짜별 일정 이름(시각 없음 · 수면 계산에 안 씀 · 지난 날도 그대로) · goals/notes: 달(YYYY-MM)마다 목표·「마감 · 준비」 메모 · ui.goalOpen: 펼침 기억 */
+  const MKEY = KEY + '-month';
+  const newMid = () => 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  function loadMonth() {
+    const d = { v: 1, events: {}, goals: {}, notes: {}, ui: { goalOpen: false } };
+    let raw = null;
+    try { raw = localStorage.getItem(MKEY); } catch (e) { return d; }
+    if (raw == null) return d;
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object' || s.v !== 1) { backup(raw); return d; }
+    const isMk = k => typeof k === 'string' && /^\d{4}-\d{2}$/.test(k);
+    const bag = (o, ok, f) => { const r = {}; if (o && typeof o === 'object') Object.keys(o).forEach(k => { if (!ok(k) || !Array.isArray(o[k])) return; const a = o[k].filter(x => x && typeof x.n === 'string' && x.n.trim()).map(f); if (a.length) r[k] = a; }); return r; };
+    const id = x => (typeof x.id === 'string' && x.id ? x.id : newMid());
+    d.events = bag(s.events, isDayKey, x => ({ id: id(x), n: x.n }));
+    d.goals = bag(s.goals, isMk, x => ({ id: id(x), n: x.n, done: !!x.done }));
+    d.notes = bag(s.notes, isMk, x => ({ id: id(x), n: x.n }));
+    d.ui.goalOpen = !!(s.ui && s.ui.goalOpen);
+    return d;
+  }
+  const MO = loadMonth();
+  // 먼슬리를 한 번도 쓰지 않은 사람에게는 키를 만들지 않는다(누르는 순간에만 저장)
+  function saveMonth() { try { localStorage.setItem(MKEY, JSON.stringify(MO)); } catch (e) { saveFailed = true; } }
   const ST = () => Object.assign({}, S, { plan: PL, home: H }); // 계산에 넘기는 상태(본 저장값 + 플래너 + 집 도착)
   /* 같은 날 같은 이름은 칸마다 하나(출발 전 pre · 집 나선 뒤 out(v19) · 퇴근 후 post(v14)) — 이름으로 찾을 때 칸을 안 주면 출발 전 것을 먼저 */
   const zoneOf = x => (x.bh ? 'post' : x.ah ? 'out' : 'pre');
@@ -757,9 +781,11 @@
 
     function build() {
       el.innerHTML = `<div class="month a1"><h2 data-r="title"></h2><div class="mnav"><span class="label num" data-r="count"></span><button class="hit" data-r="prev" aria-label="이전 달">‹</button><button class="hit" data-r="next" aria-label="다음 달">›</button></div></div>
+        <button class="goal a2" data-r="goal" aria-expanded="false"><b>이번 달 목표</b><span class="cnt num" data-r="gcnt"></span><span class="bar2"><i data-r="gbar"></i></span><span class="chev">›</span></button>
+        <div class="glass goalbody a2" data-r="gbody" hidden></div>
         <div class="seg glass a2" data-r="mode"><button data-m="shift">근무조 입력</button><button data-m="ot">OT 입력</button></div>
         <p class="rhint a2" data-r="hint"></p>
-        <div class="legend a2"><span><i class="lg A"></i>A 아침</span><span><i class="lg B"></i>B 오후</span><span><i class="lg C"></i>C 밤</span><span><i class="lg off"></i>휴무</span></div>
+        <div class="legend a2"><span><i class="lg A"></i>A 아침</span><span><i class="lg B"></i>B 오후</span><span><i class="lg C"></i>C 밤</span><span><i class="lg off"></i>휴무</span><span><i class="lgev"></i>일정</span></div>
         <div class="mtrack a3" data-r="track">${MONTHS.map((_, i) => `<div class="mpanel"><div class="grid" data-mg="${i}"></div></div>`).join('')}</div>
         <div class="mdots" data-r="dots">${MONTHS.map((_, i) => `<i data-i="${i}"></i>`).join('')}</div>
         <div class="palette a3" data-r="pal"></div><button class="fillrow a3" data-r="fill">⟳ 규칙대로 한 번에 채우기</button>
@@ -783,7 +809,8 @@
       let h = [...W].map(x => `<div class="dow">${x}</div>`).join('') + '<div></div>'.repeat(new Date(y, m, 1).getDay());
       for (let d = 1; d <= n; d++) {
         const k = keyOf(y, m, d), v = S.roster[k] || { s: 'off', ot: '' };
-        h += `<div class="day ${v.s}${k === todayKey ? ' today' : ''}${k === cur ? ' pick' : ''}" data-k="${k}"><span class="n num">${d}</span><span class="c">${v.s === 'off' ? '휴무' : v.s}</span>${v.ot ? `<span class="otp">${v.ot === 'pre' ? '전OT' : '후OT'}</span>` : ''}</div>`;
+        const ev = MO.events[k] && MO.events[k].length; // v20 일정이 있는 날: 칸 위쪽 4px 띠(색 = 칸 글자색, 휴무는 --text)
+        h += `<div class="day ${v.s}${k === todayKey ? ' today' : ''}${k === cur ? ' pick' : ''}${ev ? ' hasev' : ''}" data-k="${k}">${ev ? '<i class="evb"></i>' : ''}<span class="n num">${d}</span><span class="c">${v.s === 'off' ? '휴무' : v.s}</span>${v.ot ? `<span class="otp">${v.ot === 'pre' ? '전OT' : '후OT'}</span>` : ''}</div>`;
       }
       $(`[data-mg="${i}"]`, el).innerHTML = h;
     }
@@ -791,7 +818,9 @@
       const [y, m] = MONTHS[mi], pre = keyOf(y, m, 1).slice(0, 8);
       const ks = Object.keys(S.roster).filter(k => k.startsWith(pre) && S.roster[k].ot && S.roster[k].s !== 'off').sort();
       r('title').textContent = `${m + 1}월 근무표`;
-      r('count').textContent = `${y} · OT ${ks.length}일`;
+      const evn = Object.keys(MO.events).filter(k => k.startsWith(pre)).reduce((a, k) => a + MO.events[k].length, 0);
+      r('count').textContent = `${y} · OT ${ks.length}일${evn ? ` · 일정 ${evn}개` : ''}`; // v20: 일정이 0개면 v19 그대로
+      drawGoal();
       r('otlabel').textContent = `${m + 1}월 OT`;
       r('dots').innerHTML = MONTHS.map((_, i) => `<i data-i="${i}"${i === mi ? ' class="on"' : ''}></i>`).join('');
       const pn = r('track').children[mi]; if (pn) r('track').style.height = pn.offsetHeight + 'px';
@@ -802,13 +831,53 @@
       r('pal').style.display = mode === 'shift' ? '' : 'none';
       r('hint').textContent = mode === 'shift'
         ? '근무조를 고르고 날짜를 누르세요'
-        : '날짜를 눌러 근무조·OT 바꾸기';
+        : '날짜를 눌러 근무조·OT·일정 바꾸기';
       r('otlist').innerHTML = ks.length ? ks.map(k => {
         const v = S.roster[k], [a, b] = T[v.s];
         return `<div class="row2"><span>${md(k)} (${dow(k)}) · ${v.s}조<span class="when num">${f(v.ot === 'pre' ? a - OTH : a)}~${f(v.ot === 'post' ? b + OTH : b)}</span></span><span class="tag">${v.ot === 'pre' ? '전OT' : '후OT'}</span></div>`;
       }).join('') : '<div class="row2"><span style="color:var(--muted)">이 달은 OT가 없어요</span></div>';
     }
     function drawAll() { MONTHS.forEach((_, i) => drawMonth(i)); drawSide(); }
+    /* v20 이번 달 목표(보고 있는 달): 접힌 한 줄 N/M + 막대, 펼치면 목표 체크 목록 · 「마감 · 준비」 메모. 펼침 상태는 MO.ui.goalOpen */
+    const mkOf = () => keyOf(MONTHS[mi][0], MONTHS[mi][1], 1).slice(0, 7);
+    // 메모 한 줄: 맨 앞 「M/D」 굵게, 「→」부터 흐린 글자(보이는 모양만 — 저장은 글 그대로)
+    function noteHTML(n) {
+      const mt = n.match(/^(\d{1,2}\/\d{1,2})\s+([\s\S]+)$/), body = mt ? mt[2] : n, i = body.indexOf('→');
+      return (mt ? `<b class="num">${mt[1]}</b> ` : '') + (i < 0 ? esc(body) : `${esc(body.slice(0, i).trimEnd())} <span class="arr">${esc(body.slice(i))}</span>`);
+    }
+    function drawGoal() {
+      const mk = mkOf(), gs = MO.goals[mk] || [], ns = MO.notes[mk] || [], dn = gs.filter(x => x.done).length, open = MO.ui.goalOpen;
+      r('gcnt').textContent = `${dn}/${gs.length}`;
+      r('gbar').style.width = gs.length ? Math.round(dn / gs.length * 100) + '%' : '0%';
+      r('goal').classList.toggle('open', open); r('goal').setAttribute('aria-expanded', String(open));
+      const b = r('gbody'); b.hidden = !open;
+      b.innerHTML = !open ? '' : `<span class="label gsub">목표</span><div class="items">${gs.map(x => `<div class="item${x.done ? ' done' : ''}"><button class="cbb hit" data-gchk="${x.id}" aria-label="체크"><span class="cb"></span></button><button class="ib nmb" data-gedit="${x.id}"><span class="nm">${esc(x.n)}</span></button></div>`).join('')}<button class="addi" data-gadd="goal">+ 목표 추가</button></div>
+        <span class="label gsub">마감 · 준비</span>${ns.map(x => `<button class="memo-l" data-nedit="${x.id}">${noteHTML(x.n)}</button>`).join('')}<button class="addi" data-gadd="note">+ 메모 추가</button>`;
+    }
+    /* 목표·메모 추가·고치기 시트(이름 칸 하나). 고치기에는 「지우기」 */
+    function textSheet(kind, id) {
+      const mk = mkOf(), bag = kind === 'goal' ? MO.goals : MO.notes, arr = bag[mk] || [], it = id ? arr.find(x => x.id === id) : null;
+      if (id && !it) return;
+      const W2 = kind === 'goal' ? '목표' : '메모', mo = MONTHS[mi][1] + 1;
+      let typed = it ? it.n : '';
+      const name = () => typed.trim().slice(0, NAME_MAX);
+      openSheet(`<h3>${W2} ${it ? '고치기' : '추가'} · ${mo}월</h3><span class="label">${kind === 'goal' ? '이름' : '내용'}</span>
+        <input class="nmin" data-typed maxlength="${NAME_MAX}" placeholder="${kind === 'goal' ? '예: SQLD 접수' : '예: 12/22 면접 → 졸업증명서'}" value="${esc(typed)}">
+        <button class="go" data-go>${it ? '고치기' : '추가'}</button>${it ? '<button class="close" data-del>지우기</button>' : ''}<button class="close" data-x>닫기</button>`, e => {
+        const b = e.target.closest('button'); if (!b || b.disabled) return;
+        if (b.hasAttribute('data-go')) {
+          const n = name(); if (!n) return;
+          if (it) it.n = n; else (bag[mk] || (bag[mk] = [])).push(kind === 'goal' ? { id: newMid(), n, done: false } : { id: newMid(), n });
+          saveMonth(); closeSheet(); drawGoal();
+        } else if (b.hasAttribute('data-del')) { arr.splice(arr.indexOf(it), 1); if (!arr.length) delete bag[mk]; saveMonth(); closeSheet(); drawGoal(); }
+        else if (b.hasAttribute('data-x')) closeSheet();
+      });
+      const inp = $('[data-typed]', sheet), g = $('[data-go]', sheet);
+      const ref = () => { g.disabled = !name(); };
+      inp.oninput = () => { typed = inp.value; ref(); };
+      inp.onkeydown = ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); g.click(); } };
+      ref();
+    }
     function goMonth(i, smooth = true) {
       i = clamp(i, 0, MONTHS.length - 1);
       const tr = r('track'), w = tr.clientWidth;
@@ -822,19 +891,35 @@
     function openOT(k) {
       const prev = cur; cur = k;
       const v = S.roster[k];
+      let adding = false, evTyped = ''; // v20: 「+ 일정 추가」를 누르면 같은 시트 안에 이름 칸(새 시트 없음)
+      const evName = () => evTyped.trim().slice(0, NAME_MAX);
       const draw = () => {
-        const off = v.s === 'off', [a, b] = off ? [0, 0] : T[v.s];
+        const off = v.s === 'off', [a, b] = off ? [0, 0] : T[v.s], evs = MO.events[k] || [];
         setSheet(`<h3>${md(k)} (${dow(k)}) · ${off ? '휴무' : `${v.s}조 ${f(a)}~${f(b)}`}</h3>
+        <span class="label">일정</span><div class="evlist" data-evlist>${evs.map(x => `<div class="evrow"><span class="en">${esc(x.n)}</span><button class="x hit" data-evdel="${x.id}" aria-label="일정 빼기">×</button></div>`).join('')}${adding
+          ? `<div class="evadd"><input class="nmin" data-evin maxlength="${NAME_MAX}" placeholder="예: 폴리텍 면접" value="${esc(evTyped)}"><button class="go" data-evgo>추가</button></div>`
+          : '<button class="addev" data-evadd>+ 일정 추가</button>'}</div>
         <span class="label">근무조 · 누르면 바로 바뀌어요</span>
         <div class="opts f4" data-r="shiftrow">${[['A', 'A조'], ['B', 'B조'], ['C', 'C조'], ['off', '휴무']].map(([s, l]) => `<button data-shift="${s}" class="${v.s === s ? 'on' : ''}">${l}</button>`).join('')}</div>
         ${off ? '<span class="label">휴무 날은 OT를 넣을 수 없어요</span>'
           : `<span class="label">OT · 같은 버튼을 다시 누르면 취소</span>
         <div class="btns"><button data-ot="pre" class="${v.ot === 'pre' ? 'on' : ''}">전OT<small class="num">${f(a - OTH)}부터 근무</small></button><button data-ot="post" class="${v.ot === 'post' ? 'on' : ''}">후OT<small class="num">${f(b + OTH)}까지 근무</small></button></div>`}
         <button class="close" data-x>닫기</button>`);
+        const inp = $('[data-evin]', sheet), g = $('[data-evgo]', sheet);
+        if (inp) {
+          const ref = () => { g.disabled = !evName(); };
+          inp.oninput = () => { evTyped = inp.value; ref(); };
+          inp.onkeydown = ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); g.click(); } };
+          ref();
+        }
       };
+      const evDone = () => { saveMonth(); draw(); drawMonth(monthOf(k)); drawSide(); };
       openSheet('', e => {
-        const bt = e.target.closest('button'); if (!bt) return;
-        if (bt.dataset.ot) { v.ot = v.ot === bt.dataset.ot ? '' : bt.dataset.ot; save(); draw(); drawMonth(monthOf(k)); drawSide(); }
+        const bt = e.target.closest('button'); if (!bt || bt.disabled) return;
+        if (bt.hasAttribute('data-evadd')) { adding = true; evTyped = ''; draw(); const i = $('[data-evin]', sheet); if (i) i.focus(); }
+        else if (bt.hasAttribute('data-evgo')) { const n = evName(); if (!n) return; (MO.events[k] || (MO.events[k] = [])).push({ id: newMid(), n }); adding = false; evTyped = ''; evDone(); }
+        else if (bt.dataset.evdel) { const l = MO.events[k] || [], i = l.findIndex(x => x.id === bt.dataset.evdel); if (i >= 0) { l.splice(i, 1); if (!l.length) delete MO.events[k]; evDone(); } }
+        else if (bt.dataset.ot) { v.ot = v.ot === bt.dataset.ot ? '' : bt.dataset.ot; save(); draw(); drawMonth(monthOf(k)); drawSide(); }
         else if (bt.dataset.shift) {
           if (v.s !== bt.dataset.shift) { v.s = bt.dataset.shift; if (v.s === 'off') v.ot = ''; save(); }
           draw(); drawMonth(monthOf(k)); drawSide(); flash(`.day[data-k="${k}"]`);
@@ -890,7 +975,12 @@
         return;
       }
       const b = e.target.closest('button,[data-i]'); if (!b) return;
-      if (b.dataset.m) { mode = b.dataset.m; closeSheet(); cur = null; drawAll(); }
+      if (b.dataset.r === 'goal') { MO.ui.goalOpen = !MO.ui.goalOpen; saveMonth(); drawGoal(); }
+      else if (b.dataset.gchk) { const g = (MO.goals[mkOf()] || []).find(x => x.id === b.dataset.gchk); if (g) { g.done = !g.done; saveMonth(); drawGoal(); } }
+      else if (b.dataset.gedit) textSheet('goal', b.dataset.gedit);
+      else if (b.dataset.nedit) textSheet('note', b.dataset.nedit);
+      else if (b.dataset.gadd) textSheet(b.dataset.gadd);
+      else if (b.dataset.m) { mode = b.dataset.m; closeSheet(); cur = null; drawAll(); }
       else if (b.dataset.brush) { brush = b.dataset.brush; drawSide(); }
       else if (b.dataset.r === 'prev') goMonth((pendingM != null ? pendingM : mi) - 1);
       else if (b.dataset.r === 'next') goMonth((pendingM != null ? pendingM : mi) + 1);
