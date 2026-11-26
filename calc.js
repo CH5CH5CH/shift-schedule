@@ -106,7 +106,16 @@
     const leg = mode === 'taxi' ? st.move.taxi : st.move.bus;
     return { start: Math.max(b + S.back, base - leg), at: 'stop' };
   }
-  const preOf = tasks => tasks.filter(x => !x.bh); // 출발 전 할 일(근무일 계산). 휴무 화면은 bh 구분 없이 전부
+  const preOf = tasks => tasks.filter(x => !x.bh && !x.ah); // 출발 전 할 일(근무일 계산). 휴무 화면은 칸 구분 없이 전부
+  /* v19 「집 나선 뒤」(ah): 집에서 출발한 뒤 통근버스·회사 전에 하는 할 일(정류장 옆 헬스장 등). 출발만 합계만큼 당기고 일어나기는 그대로
+     (일어나기 = 당겨진 출발 − 출발 전 합계). 「어떻게 가요?」 선택지 모두 같은 만큼 당김. 휴무 날은 칸 없음(목록 전부 출발 전) */
+  const outOf = (st, k) => sumM(dayItems(st, k).filter(x => x.ah));
+  function depOpts(st, d, s, ot) {
+    const opts = depOptions(d, s, ot, st.move, st.early), o = outOf(st, dayToKey(d));
+    return o ? opts.map(x => Object.assign({}, x, { dep: x.dep - o })) : opts;
+  }
+  /* 칸 안 시각(사용자 승인): 시내버스·택시(정류장까지)는 「통근버스 − 합계」부터(정류장 옆에서 하고 버스를 탐), 차로 회사·전OT(회사로 바로)는 「당겨진 출발」부터(하고 나서 회사로) */
+  const outStartOf = (d, s, ot, mode, dep, out) => (ot !== 'pre' && mode !== 'car' ? d * 1440 + SHIFTS[s].bus - out : dep);
   /* v18 낮잠: 이름이 「낮잠」인 할 일(사용자 결정 11/25 — 새 칸 없음, 옛 버전도 보통 할 일로 읽어 숫자가 같음).
      일어나기 계산에는 다른 할 일처럼 들어가고, 화면은 큰 숫자(본잠) 아래 「+ 낮잠 N · 합계 M」에만 씀 */
   const NAP = '낮잠';
@@ -148,22 +157,22 @@
   function dayItems(st, k) {
     const t = dayOf(st, k);
     const own = t ? t.tasks : st.base;
-    const out = own.map(x => ({ n: x.n, m: x.m, done: !!x.done, bh: !!x.bh })); // bh: 집 오기 전(v14 — 그 근무의 집 도착을 늦춤, 출발 전 합계에서 빠짐)
+    const out = own.map(x => ({ n: x.n, m: x.m, done: !!x.done, bh: !!x.bh, ah: !!x.ah })); // bh: 집 오기 전(v14 — 그 근무의 집 도착을 늦춤) · ah: 집 나선 뒤(v19 — 출발을 당김). 둘 다 출발 전 합계에서 빠짐
     const pl = st.plan;
     if (!pl || !Array.isArray(pl.rules) || !pl.rules.length) return out;
     const names = new Set(out.map(x => x.n)), pd = planDay(pl, k), skip = (pd && pd.skip) || [], d = keyToDay(k);
     pl.rules.forEach(r => {
       if (skip.includes(r.id) || names.has(r.n) || !ruleOn(st, r, d)) return;
-      names.add(r.n); out.push({ n: r.n, m: r.m, done: false, bh: false, rule: r.id });
+      names.add(r.n); out.push({ n: r.n, m: r.m, done: false, bh: false, ah: false, rule: r.id });
     });
     return out;
   }
   /* 주간에 보이는 항목: 주간에서 넣은 것(w) + 반복 항목 + 「주간에 보이기」가 켜진 기본 목록 이름. 각 항목에 rule·carried 표시를 붙인다 */
   function weekItems(st, k) {
     const pl = st.plan || planDefault(), pd = planDay(pl, k) || {}, w = pd.w || [], r = pd.r || {}, cf = pd.cf || {}, wk = pl.wk || [];
-    const all = dayItems(st, k), pre = new Set(all.filter(x => !x.bh).map(x => x.n));
-    // v14: 같은 날 같은 이름이 출발 전·집 오기 전에 하나씩 있으면(전날 C조 퇴근 후로 옮긴 경우) 주간에는 출발 전 것만 — 주간은 (날짜, 이름)으로 항목을 찾는다
-    return all.filter(x => !(x.bh && pre.has(x.n))).map(x => Object.assign(x, { rule: x.rule || r[x.n] || null, carried: cf[x.n] || null }))
+    const all = dayItems(st, k), pre = new Set(all.filter(x => !x.bh && !x.ah).map(x => x.n));
+    // v14·v19: 같은 날 같은 이름이 여러 칸(출발 전·집 나선 뒤·퇴근 후)에 있으면 주간에는 출발 전 것(없으면 목록에서 처음 것) 하나만 — 주간은 (날짜, 이름)으로 항목을 찾는다
+    return all.filter((x, i) => (!x.bh && !x.ah) || (!pre.has(x.n) && all.findIndex(y => y.n === x.n) === i)).map(x => Object.assign(x, { rule: x.rule || r[x.n] || null, carried: cf[x.n] || null }))
       .filter(x => w.includes(x.n) || x.rule || wk.includes(x.n));
   }
   /* 이월 후보: 어제(달력 날짜) 주간 항목 중 체크 안 됨 · 반복 아님 · 이미 이월 안 함 · 오늘 같은 이름 없음. 자동으로 옮기지 않는다 */
@@ -187,7 +196,7 @@
     for (let d = today - 1; d <= today + 62; d++) {
       const k = dayToKey(d), r = st.roster[k];
       if (!r || r.s === 'off' || !SHIFTS[r.s]) continue;
-      const opts = depOptions(d, r.s, r.ot, st.move, st.early);
+      const opts = depOpts(st, d, r.s, r.ot); // v19: 집 나선 뒤 합계만큼 당겨진 출발
       const sd = dayOf(st, k), saved = sd ? sd.mode : null;
       const o = opts.find(x => x.k === saved) || opts.find(x => x.k === defaultMode(r.s, r.ot));
       if (o.dep > now) return { day: d, key: k, s: r.s, ot: r.ot, opts, mode: o.k, dep: o.dep };
@@ -270,6 +279,7 @@
       start: workStart(T.day, T.s, T.ot), shiftStart: T.day * 1440 + S.start,
       end: workEnd(T.day, T.s, T.ot), bus: T.day * 1440 + S.bus,
       homeAfter: after.home, top, after,
+      out: outOf(st, T.key), outStart: outStartOf(T.day, T.s, T.ot, T.mode, T.dep, outOf(st, T.key)),
     });
   }
 
@@ -303,7 +313,7 @@
         home, bed: home, wakeClock, wake, end: wake + total, sleep: home != null ? wake - home : null, rest: t ? !!t.rest : false,
       });
     }
-    const opts = depOptions(d, r.s, r.ot, st.move, st.early);
+    const opts = depOpts(st, d, r.s, r.ot); // v19
     const saved = t ? t.mode : null;
     const o = opts.find(x => x.k === saved) || opts.find(x => x.k === defaultMode(r.s, r.ot));
     const T = { day: d, key, s: r.s, ot: r.ot, opts, mode: o.k, dep: o.dep };
@@ -316,6 +326,7 @@
       dep: T.dep, mode: T.mode, opts, early: earlyFor(r.ot, st.early),
       start: workStart(d, r.s, r.ot), shiftStart: d * 1440 + S.start,
       end: workEnd(d, r.s, r.ot), bus: d * 1440 + S.bus, homeAfter: after.home, after,
+      out: outOf(st, key), outStart: outStartOf(d, r.s, r.ot, T.mode, T.dep, outOf(st, key)),
     });
   }
 
@@ -350,7 +361,7 @@
   const api = {
     SHIFTS, OT_MIN, RANGE_START, RANGE_END, ANCHOR, ORDER, CYCLE,
     keyToDay, dayToKey, nowAbs, fmt, dur, fillRoster, defaultRoster, earlyFor, defaultMode,
-    depOptions, homeArrival, homeFix, homeOf, afterStart, preOf, NAP, isNap, napOf, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
+    depOptions, depOpts, outOf, homeArrival, homeFix, homeOf, afterStart, preOf, NAP, isNap, napOf, workStart, workEnd, findTarget, offNth, inProgress, computeToday,
     dayOf, sumM, nextWork, computeDay, migrateToday, pruneDays,
     PLAN_WK, planDefault, weekday, weekStart, weekLabel, ruleOn, dayItems, weekItems, carryList, prunePlan,
   };
